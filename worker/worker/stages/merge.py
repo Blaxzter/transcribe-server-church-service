@@ -164,8 +164,8 @@ def split_across_speech(segment: dict[str, Any], speech_regions: list[dict[str, 
     The batched ASR merges everything between two silences into one segment, so
     a segment can cover several separate passages of speech with minutes of hymn
     between them. Truncating it at the first gap fixed the timing but deleted the
-    rest of the text - in testing that lost "Lieber Daniel, lieber Stefan, ihr
-    lieben Jugendlichen...", which was really said, just later.
+    rest of the text - in testing that lost the opening address of a later
+    passage, which was really said, just later.
 
     The text of a merged chunk describes all the speech inside it, so the words
     are distributed across the runs in proportion to how long each run lasts.

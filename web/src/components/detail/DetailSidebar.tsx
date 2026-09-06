@@ -108,7 +108,7 @@ export function DetailSidebar({
           <HymnsPanel hymns={doc?.hymns ?? []} onSeek={onSeek} />
         </TabsContent>
         <TabsContent value="export" className="min-h-0 flex-1 overflow-y-auto p-5">
-          <ExportPanel jobId={job.id} hasOriginal={job.has_original} />
+          <ExportPanel jobId={job.id} doc={doc} hasOriginal={job.has_original} />
         </TabsContent>
         <TabsContent value="details" className="min-h-0 flex-1 overflow-y-auto p-5">
           <DetailsPanel job={job} doc={doc} legacy={legacy} />

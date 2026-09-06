@@ -79,6 +79,65 @@ export interface Transcript {
   updated_at?: string;
 }
 
+export type ExportFormat = "docx" | "md" | "txt" | "srt" | "vtt";
+export type ParagraphMode = "blocks" | "segment" | "speaker" | "section";
+export type SectionBreak = "none" | "blank" | "heading" | "page";
+
+/** Mirrors `ExportOptions` on the server; every field is optional there too. */
+export interface ExportOptions {
+  /** Speaker ids to keep; omit for all, empty for none. */
+  speakers?: string[] | null;
+  /** Section indices to keep; omit for all. */
+  sections?: number[] | null;
+  speaker_labels?: boolean;
+  timestamps?: boolean;
+  music?: boolean;
+  header?: boolean;
+  summary?: boolean;
+  paragraphs?: ParagraphMode;
+  section_break?: SectionBreak;
+  /** Template id; DOCX only. */
+  template?: string | null;
+}
+
+/** A run of speech between two pieces of music, as the export picker shows it. */
+export interface Section {
+  index: number;
+  start: number;
+  end: number;
+  /** Seconds each speaker talks in this section. */
+  speakers: Record<string, number>;
+  segment_count: number;
+  words: number;
+  /** Music markers that lead into this section (or close the last one). */
+  music: { text: string; start: number }[];
+  preview: string;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  filename: string;
+  size_bytes: number | null;
+  /** Lower-cased placeholder names found in the document, in order. */
+  placeholders: string[];
+  /** Placeholders the export does not know and will leave untouched. */
+  unknown_placeholders: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateList {
+  templates: Template[];
+  /** Placeholder names the export can fill. */
+  fields: string[];
+}
+
+export interface ExportFile {
+  blob: Blob;
+  filename: string;
+}
+
 export interface Peaks {
   version: number;
   duration: number;
@@ -148,7 +207,79 @@ export const api = {
   originalUrl: (id: string) => `/api/jobs/${id}/original`,
 
   exportUrl: (id: string, format: string) => `/api/jobs/${id}/export/${format}`,
+
+  getSections: (id: string) => request<{ sections: Section[] }>(`/api/jobs/${id}/sections`),
+
+  /**
+   * An export with options is a POST, so the file arrives as a blob and the
+   * caller hands it to the browser as a download. The server names the file.
+   */
+  exportFile: async (id: string, format: ExportFormat, options: ExportOptions) => {
+    const response = await fetch(`/api/jobs/${id}/export/${format}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+    });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        detail = (await response.json())?.detail ?? detail;
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const match = /filename="([^"]+)"/.exec(disposition);
+    return {
+      blob: await response.blob(),
+      filename: match?.[1] ?? `transkript.${format}`,
+    } satisfies ExportFile;
+  },
+
+  listTemplates: () => request<TemplateList>("/api/templates"),
+
+  uploadTemplate: async (file: File, name?: string) => {
+    const body = new FormData();
+    body.append("file", file, file.name);
+    if (name) body.append("name", name);
+    const response = await fetch("/api/templates", { method: "POST", body });
+    if (!response.ok) {
+      let detail = response.statusText;
+      try {
+        detail = (await response.json())?.detail ?? detail;
+      } catch {
+        /* non-JSON error body */
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return (await response.json()) as Template;
+  },
+
+  renameTemplate: (id: string, name: string) =>
+    request<Template>(`/api/templates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteTemplate: (id: string) =>
+    request<{ status: string }>(`/api/templates/${id}`, { method: "DELETE" }),
+
+  templateFileUrl: (id: string) => `/api/templates/${id}/file`,
 };
+
+/** Hands a blob to the browser as a download and cleans up after itself. */
+export function saveFile({ blob, filename }: ExportFile): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoking synchronously can cancel the download in some browsers.
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 
 /**
  * Subscribe to a job's progress. Returns an unsubscribe function.

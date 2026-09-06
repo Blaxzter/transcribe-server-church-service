@@ -7,6 +7,8 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
 UPLOADS_DIR = DATA_DIR / "uploads"
+# Word templates for the DOCX export, one .docx per row in the templates table.
+TEMPLATES_DIR = DATA_DIR / "templates"
 DB_PATH = DATA_DIR / "transcribe.db"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -33,5 +35,5 @@ def job_dir(job_id: str) -> Path:
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, JOBS_DIR, UPLOADS_DIR):
+    for d in (DATA_DIR, JOBS_DIR, UPLOADS_DIR, TEMPLATES_DIR):
         d.mkdir(parents=True, exist_ok=True)

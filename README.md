@@ -348,6 +348,55 @@ high confidence, so no threshold caught it. `ASR_INITIAL_PROMPT` exists if you
 want to experiment; use a natural sentence, never a word list. The prompt-echo
 filter will catch verbatim regurgitation either way.
 
+## Export
+
+The transcript is refined in Word, so the export is built around that: pick
+what goes in, decide how it looks, pour it into your own template.
+
+**What goes in.** *Export einrichten…* lists the speakers and the sections of
+the service. A section is a run of speech between two pieces of music
+(greeting, sermon, announcements …); a legacy import without music markers is
+split at pauses longer than two minutes instead. Untick a speaker to drop
+everything they say, untick a section to drop that part of the service. The
+music that leads into a section is exported with it.
+
+**How it looks.** Speaker names, timestamps, music markers, title and summary
+are each a switch. *Absätze* decides where paragraphs break (at every speaker
+change, short blocks, every sentence, or one paragraph per section) and
+*Zwischen den Abschnitten* what separates two sections (nothing, a blank line,
+a heading, a page break). These settings are stored in the browser's local
+storage; *Sofort herunterladen* reuses them for the whole recording without
+opening the dialog. The defaults are tuned for editing: no labels, no
+timestamps, a new paragraph at every speaker change.
+
+**Word templates.** Upload any `.docx` under *Vorlagen verwalten* and write
+placeholders wherever the recording's data should land. Everything else in the
+document — styles, headers, logos, tables — stays as it is. Placeholders are
+case-insensitive and may sit inside a heading, a table cell, a header or a
+footer:
+
+| Placeholder            | Becomes                                                            |
+| ---------------------- | ------------------------------------------------------------------ |
+| `{{Titel}}`            | title of the recording                                             |
+| `{{Datum}}`            | service date as `18.08.2023`                                       |
+| `{{Dauer}}`            | length of the recording                                            |
+| `{{Sprecher}}`         | names of the exported speakers, comma-separated                    |
+| `{{Lieder}}`           | announced hymn numbers, comma-separated                            |
+| `{{Liederliste}}`      | one paragraph per hymn; a bulleted placeholder gives a bulleted list |
+| `{{Zusammenfassung}}`  | the summary, paragraph by paragraph                                |
+| `{{Text}}`             | the transcript, laid out as configured                             |
+
+The paragraph holding `{{Text}}` (or `{{Liederliste}}`, `{{Zusammenfassung}}`)
+lends its style to every paragraph the export generates in its place, so the
+template decides font, spacing and indentation. Unknown placeholders are left
+untouched and flagged in the template list. Templates live in
+`data/templates/`, one file per row in the `templates` table. The preview in
+the dialog renders the finished `.docx` in the browser, template included.
+
+The old `GET /api/jobs/<id>/export/<fmt>` still produces the fixed
+everything-included layout; the dialog uses `POST` with an options body
+(see `ExportOptions` in `api/app/exports.py`).
+
 ## Development
 
 ```powershell
@@ -359,7 +408,8 @@ cd web; npm run dev                     # frontend on :5173, proxies to :8080
 
 ```
 data/
-  transcribe.db              SQLite (jobs, uploads)
+  transcribe.db              SQLite (jobs, uploads, templates)
+  templates/<id>.docx        Word templates for the export
   uploads/*.part          in-flight chunked uploads
   jobs/<id>/
     original.<ext>        what was uploaded
@@ -441,18 +491,12 @@ Full write-up, including what has already been tried and why each attempt failed
 [`docs/handoff-music-speech-boundaries.md`](docs/handoff-music-speech-boundaries.md).
 
 A few words are lost where speech meets music. Most visible on job
-`7cfcf258151a411da7edd6d852fd19dc` (2026-08-27 R. Gerhardt), where it happens at
-essentially every boundary.
+`7cfcf258151a411da7edd6d852fd19dc` (a 73-minute service from 2026-08-27), where
+it happens at essentially every boundary.
 
 Measured against that recording's previous transcript, after the redistribution
-fix: 26 words, 0.4% of the text, in short fragments cut mid-phrase.
-
-| when | fragment |
-|---|---|
-| 1246.6 s | "und das hier ist euer" |
-| 1621.6 s | "und wenn wir auf ein fest der begegnung zugehen das" |
-| 2095.0 s | "empfange den segen des herrn und" |
-| 3696.2 s | "manchmal ist es aber auch" |
+fix: 26 words, 0.4% of the text, in four short fragments cut mid-phrase, each
+the head or tail of a sentence.
 
 Reproduce the measurement by diffing a reprocessed transcript against the
 recording's pre-pipeline text, classifying each old-only run as looping, inside

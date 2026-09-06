@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 
-from . import db, exports, jobs, transcript, uploads
+from . import db, exports, jobs, templates, transcript, uploads
 from .config import (LOG_LEVEL, REDIS_URL, STATIC_DIR, UPLOAD_EXPIRY_HOURS,
                      UPLOADS_DIR, ensure_dirs)
 from .events import HEARTBEAT_KEY, WRITABLE_EVENT_FIELDS, bus
@@ -138,6 +138,7 @@ app.include_router(uploads.router)
 app.include_router(jobs.router)
 app.include_router(transcript.router)
 app.include_router(exports.router)
+app.include_router(templates.router)
 
 
 @app.get("/api/health")

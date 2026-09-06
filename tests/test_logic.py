@@ -985,7 +985,7 @@ def test_hymn_context_is_centred_on_the_number() -> None:
 # ---------------------------------------------------------------------------
 def test_segment_spanning_two_speech_runs_keeps_all_its_text() -> None:
     """Truncating at the first gap fixed the timing but deleted real speech -
-    "Lieber Daniel, lieber Stefan..." was said, just later in the segment."""
+    the opening address of a later passage was said, just later in the segment."""
     speech = [{"start": 100.0, "end": 110.0}, {"start": 400.0, "end": 410.0}]
     segment = {"start": 100.0, "end": 410.0, "text": "eins zwei drei vier",
                "words": _words([("eins", 100.5, 101.0), ("zwei", 101.1, 101.8),

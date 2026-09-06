@@ -12,6 +12,7 @@ const SIZES = {
   sm: "max-w-sm",
   md: "max-w-lg",
   lg: "max-w-2xl",
+  xl: "max-w-5xl",
 } as const;
 
 export interface DialogProps {
@@ -120,7 +121,7 @@ export function Dialog({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          "relative w-full animate-panel-in rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none",
+          "relative max-h-[calc(100vh-2rem)] w-full animate-panel-in overflow-y-auto rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none",
           SIZES[size],
           className,
         )}

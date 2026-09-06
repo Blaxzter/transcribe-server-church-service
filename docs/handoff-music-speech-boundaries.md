@@ -7,18 +7,14 @@ about — where a number appears, it came from running the thing.
 ## The problem
 
 A few words are cut where speech meets music. Most visible on
-`7cfcf258151a411da7edd6d852fd19dc` (*2026-08-27 R. Gerhardt*, 72.7 min), where it
+`7cfcf258151a411da7edd6d852fd19dc` (*2026-08-27*, 72.7 min), where it
 happens at nearly every boundary.
 
 Measured against that recording's pre-pipeline transcript: **26 words, 0.4% of
 the text**, in fragments cut mid-phrase.
 
-| when | fragment lost |
-|---|---|
-| 1246.6 s | "und das hier ist euer" |
-| 1621.6 s | "und wenn wir auf ein fest der begegnung zugehen das" |
-| 2095.0 s | "empfange den segen des herrn und" |
-| 3696.2 s | "manchmal ist es aber auch" |
+The four fragments sit at 1246.6 s, 1621.6 s, 2095.0 s and 3696.2 s and are
+two to eight words long each.
 
 They read like the head or tail of a sentence, which is what points at boundary
 handling rather than at recognition.
@@ -71,13 +67,13 @@ the utterance.
 services: ordinary speaking pauses have a 90th percentile of 1.5–2.3 s, while the
 gaps that must be cut are 20 s and up. This is why the constant is 8 and not
 something rounder. Note the distribution is *not* cleanly bimodal on every
-service — Gerhardt has 19 gaps in the 4–30 s band.
+service — the 2026-08-27 one has 19 gaps in the 4–30 s band.
 
 **Truncation itself.** Even at 8 s it discarded the tail of a merged segment,
-which is real speech from a *later* run, not noise. That lost *"Lieber Daniel,
-lieber Stefan, ihr lieben Jugendlichen…"*. Replaced by the proportional
-redistribution now in place, which took Gerhardt from 201 unexplained words to 26
-and Schermutzki from 476 to **0**.
+which is real speech from a *later* run, not noise. That lost the opening
+address of a later speech run. Replaced by the proportional redistribution now
+in place, which took the 2026-08-27 service from 201 unexplained words to 26
+and a second service from 476 to **0**.
 
 **Halving `MUSIC_HOP_S` for finer resolution.** Considered and rejected on
 evidence: inside a musical passage the AudioSet speech score sits at 0.003–0.018
@@ -113,7 +109,7 @@ transcript, with every old-only run of 5+ words classified as one of:
 - **inside detected music** — falls within a region in `music.json`. Sung lyrics,
   absent by design.
 - **unexplained** — everything else. *This is the bug.* Currently 26 words on
-  Gerhardt, 0 on Schermutzki.
+  the 2026-08-27 service, 0 on the second one.
 
 A fix should shrink the unexplained bucket without growing the others, and must
 leave hallucinations at 0, the seven music regions intact, and the speaker count
