@@ -34,16 +34,23 @@ Abschnitt:
 {text}
 ---"""
 
+# Note: this prompt deliberately gives NO example outline. An earlier version
+# suggested "z. B. Begruessung, Lesung, Predigt, Fuerbitten, Abendmahl, Segen"
+# and the model returned exactly those six words for an actual service, having
+# derived nothing from the transcript at all. Same failure as priming Whisper
+# with a word list: an example list is something to copy, not a hint.
 FINAL_PROMPT = """Dir liegen Zusammenfassungen der Abschnitte eines deutschen
 Gottesdienstes vor.
 
 Erstelle daraus auf Deutsch:
-1. Einen Absatz "Zusammenfassung" mit 5 bis 8 Saetzen ueber den gesamten Gottesdienst.
+1. Einen Absatz mit 5 bis 8 Saetzen ueber den gesamten Gottesdienst.
 2. Danach eine Zeile "Gliederung:" gefolgt von 4 bis 8 Stichpunkten, jeweils mit
-   "- " beginnend, die den Ablauf wiedergeben (z. B. Begruessung, Lesung, Predigt,
-   Fuerbitten, Abendmahl, Segen).
+   "- " beginnend. Jeder Stichpunkt muss benennen, worum es an dieser Stelle
+   konkret ging - das Thema, die Bibelstelle, das Lied oder die Aussage. Ein
+   blosser liturgischer Name wie "Predigt" oder "Segen" ist nicht genug.
+   Nimm nur Punkte auf, die im Text tatsaechlich vorkommen.
 
-Erfinde nichts. Antworte ohne Vorrede.
+Beginne ohne Ueberschrift und ohne Vorrede. Erfinde nichts.
 
 Abschnitts-Zusammenfassungen:
 ---
@@ -155,14 +162,26 @@ def _complete(client: httpx.Client, prompt: str) -> str:
     return _THINK.sub("", response.json().get("response", "")).strip()
 
 
+_HEADING = re.compile(r"^\s*(zusammenfassung|summary)\s*:?\s*$",
+                      re.IGNORECASE | re.MULTILINE)
+
+
 def _split_outline(text: str) -> tuple[str, list[str]]:
     marker = re.search(r"^\s*gliederung\s*:?\s*$", text, re.IGNORECASE | re.MULTILINE)
     if not marker:
-        return text.strip(), []
-    summary = text[:marker.start()].strip()
+        return _strip_heading(text), []
+    summary = _strip_heading(text[:marker.start()])
     outline = [
         re.sub(r"^[-*•]\s*", "", line).strip()
         for line in text[marker.end():].splitlines()
         if line.strip()
     ]
     return summary, [item for item in outline if item]
+
+
+def _strip_heading(text: str) -> str:
+    """Drop a leading "Zusammenfassung:" line the model adds despite being asked not to."""
+    cleaned = _HEADING.sub("", text, count=1).strip()
+    # Also handles the inline form, where the heading opens the first sentence.
+    return re.sub(r"^(zusammenfassung|summary)\s*:\s*", "", cleaned,
+                  count=1, flags=re.IGNORECASE).strip()

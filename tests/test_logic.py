@@ -530,3 +530,53 @@ def test_split_falls_back_to_a_hard_cut_without_punctuation() -> None:
     pieces = merge._split_long(segment)
     assert len(pieces) > 1
     assert all(p["end"] - p["start"] <= 35.0 for p in pieces)
+
+
+# ---------------------------------------------------------------------------
+# Summary post-processing
+# ---------------------------------------------------------------------------
+def test_leading_heading_is_stripped() -> None:
+    """qwen3 prefixes "Zusammenfassung:" despite being told not to."""
+    from worker.stages.summarize import _split_outline
+
+    summary, outline = _split_outline(
+        "Zusammenfassung:\nDer Gottesdienst dreht sich um Gebet und Frieden."
+    )
+    assert summary == "Der Gottesdienst dreht sich um Gebet und Frieden."
+    assert outline == []
+
+
+def test_inline_heading_is_stripped() -> None:
+    from worker.stages.summarize import _split_outline
+
+    summary, _ = _split_outline("Zusammenfassung: Es ging um Frieden.")
+    assert summary == "Es ging um Frieden."
+
+
+def test_outline_is_split_from_summary() -> None:
+    from worker.stages.summarize import _split_outline
+
+    summary, outline = _split_outline(
+        "Es ging um Gebet und Frieden.\n\n"
+        "Gliederung:\n"
+        "- Begruessung mit Hinweis auf den Kirchentag\n"
+        "- Lesung aus dem Roemerbrief, Kapitel acht\n"
+        "* Predigt ueber die Bitte um taegliches Brot\n"
+    )
+    assert summary == "Es ging um Gebet und Frieden."
+    assert outline == [
+        "Begruessung mit Hinweis auf den Kirchentag",
+        "Lesung aus dem Roemerbrief, Kapitel acht",
+        "Predigt ueber die Bitte um taegliches Brot",
+    ]
+
+
+def test_final_prompt_contains_no_example_outline() -> None:
+    """Regression: the prompt used to suggest an example liturgy list, and the
+    model returned exactly that list for a real service, deriving nothing."""
+    from worker.stages.summarize import FINAL_PROMPT
+
+    lowered = FINAL_PROMPT.lower()
+    assert "z. b." not in lowered and "z.b." not in lowered
+    # The give-away sequence must not appear as a suggestion.
+    assert "fuerbitten, abendmahl" not in lowered
