@@ -435,6 +435,44 @@ inside a ten-second classification window does not change that window's verdict.
 Halving `MUSIC_HOP_S` (5 → 2.5) doubles boundary resolution for roughly a minute
 more per job, if that trade is worth it to you.
 
+## Open issue: words clipped at music/speech boundaries
+
+A few words are lost where speech meets music. Most visible on job
+`7cfcf258151a411da7edd6d852fd19dc` (2026-08-27 R. Gerhardt), where it happens at
+essentially every boundary.
+
+Measured against that recording's previous transcript, after the redistribution
+fix: 26 words, 0.4% of the text, in short fragments cut mid-phrase.
+
+| when | fragment |
+|---|---|
+| 1246.6 s | "und das hier ist euer" |
+| 1621.6 s | "und wenn wir auf ein fest der begegnung zugehen das" |
+| 2095.0 s | "empfange den segen des herrn und" |
+| 3696.2 s | "manchmal ist es aber auch" |
+
+Reproduce the measurement by diffing a reprocessed transcript against the
+recording's pre-pipeline text, classifying each old-only run as looping, inside
+music, or unexplained — the unexplained bucket is this issue.
+
+Four places decide a boundary, and the fault is likely shared between them:
+
+- `VAD_SPEECH_PAD_MS` (200 ms) in `worker/worker/config.py` pads each speech
+  region. A word starting just before the pad is outside the region.
+- `clip_to_speech` in `worker/worker/stages/merge.py` truncates a segment at the
+  end of the speech run it starts in.
+- `split_across_speech` distributes a merged segment's words across the runs it
+  spans **in proportion to each run's duration**. That is a heuristic, and it is
+  weakest exactly at the joins — the most likely culprit for mid-phrase cuts.
+- `_music_without_speech` clips music regions off transcribed speech, which
+  moves the visible boundary but not the word list.
+
+`data/jobs/<id>/vad.json`, `music.json` and `asr.json` are all kept, so the
+boundary can be inspected without re-running the GPU stages. Note that
+`asr.json` holds the bounds *after* tightening, and the word timings inside a
+merged segment are themselves unreliable — that is what made the naive fixes
+fail.
+
 ## Known limits
 
 - **Laptop sleep suspends a running job.** If it wakes, the worker carries on.
