@@ -999,3 +999,110 @@ def test_hymn_context_is_centred_on_the_number() -> None:
     context = hymns.extract(doc)[0]["context"]
     assert "122" in context
     assert "Choral" in context
+
+
+# ---------------------------------------------------------------------------
+# Redistributing a merged segment instead of truncating it
+# ---------------------------------------------------------------------------
+def test_segment_spanning_two_speech_runs_keeps_all_its_text() -> None:
+    """Truncating at the first gap fixed the timing but deleted real speech -
+    "Lieber Daniel, lieber Stefan..." was said, just later in the segment."""
+    speech = [{"start": 100.0, "end": 110.0}, {"start": 400.0, "end": 410.0}]
+    segment = {"start": 100.0, "end": 410.0, "text": "eins zwei drei vier",
+               "words": _words([("eins", 100.5, 101.0), ("zwei", 101.1, 101.8),
+                                ("drei", 402.0, 402.6), ("vier", 402.7, 403.4)])}
+    pieces = merge.split_across_speech(segment, speech)
+    assert len(pieces) == 2
+    assert " ".join(p["text"] for p in pieces) == "eins zwei drei vier"
+    assert pieces[0]["end"] <= pieces[1]["start"]
+    assert all(p["redistributed"] for p in pieces)
+
+
+def test_redistribution_places_nothing_over_the_gap() -> None:
+    speech = [{"start": 10.0, "end": 20.0}, {"start": 300.0, "end": 320.0}]
+    segment = {"start": 10.0, "end": 320.0, "text": "a b c d e f", "words": None}
+    pieces = merge.split_across_speech(segment, speech)
+    assert len(pieces) == 2
+    # No piece straddles the silent stretch between the two runs.
+    assert pieces[0]["end"] <= 20.0 and pieces[1]["start"] >= 300.0
+    assert " ".join(p["text"] for p in pieces).split() == list("abcdef")
+
+
+def test_single_run_still_just_clips() -> None:
+    speech = [{"start": 10.0, "end": 20.0}]
+    segment = {"start": 10.0, "end": 100.0, "text": "a b", "words": None}
+    pieces = merge.split_across_speech(segment, speech)
+    assert len(pieces) == 1 and pieces[0]["end"] == 20.0
+
+
+# ---------------------------------------------------------------------------
+# Phrasings that the first version of the rules got wrong
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text,expected", [
+    # A "Strophen" earlier in the sentence used to hide a real announcement,
+    # because the verse exclusion consumed everything to the next full stop.
+    ("Wir singen alle vier Strophen und nach der Predigt den Choral Nummer 154 "
+     "in diese Welt entlassen", [154]),
+    ("Ihr Lieben, wir singen nun zusammen das Lied 446 vom Herr Segne uns", [446]),
+    # The number trails the cue by several words, behind an article.
+    ("Das ist der Choral aus unserem Gesangbuch, die 71", [71]),
+    ("Wir wollen nun gemeinsam den ersten Choral von unserem Liederzettel "
+     "singen, die 440, Ich bin getauft", [440]),
+    # Correct even with verse talk following the number.
+    ("wir singen nun das Lied 210, Sag Ja zu deinem Leben, alle Strophen.", [210]),
+    ("eingangs das Lied Nummer 144, die Strophen 1 bis 4.", [144]),
+])
+def test_real_phrasings_from_the_archive(text: str, expected: list[int]) -> None:
+    assert hymns.find_in_text(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    # The trailing-number rule must not grab any number after a hymn word.
+    "Das Lied hat uns allen gutgetan, wir waren 250 Menschen.",
+    "Nach dem Lied sprachen wir über das Jahr 1917.",
+    "Wir singen alle vier Strophen.",
+    "Großer Gott, wir loben dich. Die Strophen 1 bis 4 und 6.",
+])
+def test_trailing_rule_does_not_overreach(text: str) -> None:
+    assert hymns.find_in_text(text) == []
+
+
+def test_announcement_split_across_segments_is_still_found() -> None:
+    """Whisper splits mid-announcement, leaving the cue in one segment and the
+    number in the next, so a per-segment scan alone never sees it."""
+    doc = {"segments": [
+        {"id": "s0", "type": "speech", "start": 10.0, "end": 14.0,
+         "text": "Wir wollen nun gemeinsam den ersten Choral von unserem Liederzettel singen,"},
+        {"id": "s1", "type": "speech", "start": 14.0, "end": 20.0,
+         "text": "die 440, Ich bin getauft, wir singen alle vier Strophen."},
+    ]}
+    got = hymns.extract(doc)
+    assert [h["number"] for h in got] == [440]
+    # Credited to the segment the number is in, not the one with the cue.
+    assert got[0]["segment_id"] == "s1" and got[0]["at"] == 14.0
+
+
+def test_lookbehind_does_not_reach_across_music() -> None:
+    """A hymn word before a musical passage must not attach to a number said
+    after it - they are minutes apart and unrelated."""
+    doc = {"segments": [
+        {"id": "s0", "type": "speech", "start": 0.0, "end": 5.0,
+         "text": "Wir singen jetzt das Lied"},
+        {"id": "s1", "type": "music", "start": 5.0, "end": 300.0,
+         "text": "[Gemeindegesang]"},
+        {"id": "s2", "type": "speech", "start": 300.0, "end": 305.0,
+         "text": "250 Menschen waren da."},
+    ]}
+    assert hymns.extract(doc) == []
+
+
+def test_number_in_the_lookbehind_is_not_double_counted() -> None:
+    doc = {"segments": [
+        {"id": "s0", "type": "speech", "start": 0.0, "end": 5.0,
+         "text": "Wir singen den Choral 71."},
+        {"id": "s1", "type": "speech", "start": 5.0, "end": 9.0,
+         "text": "Danach hören wir die Lesung."},
+    ]}
+    got = hymns.extract(doc)
+    assert [h["number"] for h in got] == [71]
+    assert got[0]["segment_id"] == "s0"

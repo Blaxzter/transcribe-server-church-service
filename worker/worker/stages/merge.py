@@ -99,7 +99,8 @@ def run(*, job_id: str, duration: float, language: str,
     # by its timespan, and long segments must be broken up before speakers are
     # assigned, so a speaker change lands on a sentence boundary where possible.
     segments = [tighten_bounds(s) for s in asr_segments]
-    segments = [clip_to_speech(s, speech_regions or []) for s in segments]
+    segments = [piece for s in segments
+                for piece in split_across_speech(s, speech_regions or [])]
     segments, swallowed = _drop_inside_music(segments, music_regions)
     segments = [piece for s in segments for piece in _split_long(s)]
 
@@ -154,6 +155,72 @@ def tighten_bounds(segment: dict[str, Any]) -> dict[str, Any]:
     return {**segment,
             "start": round(float(first["start"]), 3),
             "end": round(float(last["end"]), 3)}
+
+
+def split_across_speech(segment: dict[str, Any], speech_regions: list[dict[str, float]],
+                        max_gap: float = _SPEECH_BRIDGE_SECONDS) -> list[dict[str, Any]]:
+    """Spread a segment over the runs of speech it actually spans.
+
+    The batched ASR merges everything between two silences into one segment, so
+    a segment can cover several separate passages of speech with minutes of hymn
+    between them. Truncating it at the first gap fixed the timing but deleted the
+    rest of the text - in testing that lost "Lieber Daniel, lieber Stefan, ihr
+    lieben Jugendlichen...", which was really said, just later.
+
+    The text of a merged chunk describes all the speech inside it, so the words
+    are distributed across the runs in proportion to how long each run lasts.
+    Timing within a run is approximate, but nothing is thrown away and no text
+    is placed over music.
+    """
+    runs = _speech_runs(segment, speech_regions, max_gap)
+    if len(runs) <= 1:
+        return [clip_to_speech(segment, speech_regions, max_gap)]
+
+    words = segment.get("words")
+    total = sum(end - start for start, end in runs) or 1.0
+    pieces: list[dict[str, Any]] = []
+    consumed = 0
+
+    units = words if words else (segment.get("text") or "").split()
+    for index, (start, end) in enumerate(runs):
+        last = index == len(runs) - 1
+        share = int(round(len(units) * (end - start) / total))
+        take = len(units) - consumed if last else max(share, 0)
+        chunk = units[consumed:consumed + take]
+        consumed += len(chunk)
+        if not chunk:
+            continue
+        piece = {**segment,
+                 "start": round(segment["start"] if index == 0 else start, 3),
+                 "end": round(segment["end"] if last and segment["end"] < end else end, 3),
+                 "redistributed": True}
+        if words:
+            piece["words"] = chunk
+            piece["text"] = " ".join(w["word"].strip() for w in chunk).strip()
+        else:
+            piece["words"] = None
+            piece["text"] = " ".join(chunk).strip()
+        pieces.append(piece)
+    return pieces or [segment]
+
+
+def _speech_runs(segment: dict[str, Any], speech_regions: list[dict[str, float]],
+                 max_gap: float) -> list[tuple[float, float]]:
+    """Contiguous stretches of speech the segment covers, split at long gaps."""
+    covering = [r for r in speech_regions
+                if r["end"] > segment["start"] and r["start"] < segment["end"]]
+    if not covering:
+        return []
+    runs: list[tuple[float, float]] = []
+    start, end = covering[0]["start"], covering[0]["end"]
+    for region in covering[1:]:
+        if region["start"] - end > max_gap:
+            runs.append((start, end))
+            start, end = region["start"], region["end"]
+        else:
+            end = max(end, region["end"])
+    runs.append((start, end))
+    return runs
 
 
 def clip_to_speech(segment: dict[str, Any], speech_regions: list[dict[str, float]],

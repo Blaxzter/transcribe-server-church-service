@@ -30,10 +30,21 @@ _WITH_CUE = re.compile(
 # A bare "Nummer 144" with no hymn word, which the announcements also use.
 _BARE_ORDINAL = re.compile(rf"\b{_ORDINAL}[\s,:]*(\d{{1,3}})\b", re.IGNORECASE)
 
+# "Choral aus unserem Gesangbuch, die 71" - the number trails the cue by a few
+# words. Requiring an article or ordinal directly in front of it keeps this from
+# swallowing any stray number that happens to follow a hymn word.
+_TRAILING = re.compile(
+    rf"\b{_CUE}\b[^.!?]{{0,60}}?\b(?:die|der|das|den|{_ORDINAL})\s+(\d{{1,3}})\b",
+    re.IGNORECASE)
+
 # Verse talk. Checked against the text immediately before a match.
 _VERSE_BEFORE = re.compile(r"stroph[en]*\s*$", re.IGNORECASE)
-# "Strophen 1 bis 4 und 6" - everything after the cue is verses, not hymns.
-_VERSE_RUN = re.compile(r"\bstroph[en]*\b[^.!?]*", re.IGNORECASE)
+# "Strophen 1 bis 4 und 6" - only the numbers hanging directly off the cue are
+# verses. Consuming the rest of the sentence instead, as this once did, meant a
+# single "Strophen" earlier on hid a real announcement later in the same
+# sentence: "alle vier Strophen und nach der Predigt den Choral Nummer 154".
+_VERSE_RUN = re.compile(
+    r"\bstroph[en]*\b(?:\s*(?:\d{1,3}|bis|und|oder|[,–-]))*", re.IGNORECASE)
 
 
 def _verse_spans(text: str) -> list[tuple[int, int]]:
@@ -44,13 +55,24 @@ def _inside(position: int, spans: Iterable[tuple[int, int]]) -> bool:
     return any(lo <= position < hi for lo, hi in spans)
 
 
+# How much of the preceding segment to read as context. Whisper splits mid
+# announcement - "…den ersten Choral von unserem Liederzettel singen," / "die
+# 440, Ich bin getauft" - so a per-segment scan alone never sees the cue.
+LOOKBEHIND_CHARS = 90
+
+
 def find_in_text(text: str) -> list[int]:
     """Hymn numbers announced in a piece of text, in order of appearance."""
+    return [number for number, _ in find_with_positions(text)]
+
+
+def find_with_positions(text: str) -> list[tuple[int, int]]:
+    """(number, index of its digits) so callers can tell which segment it is in."""
     verses = _verse_spans(text)
-    found: list[int] = []
+    found: list[tuple[int, int]] = []
     seen_at: set[int] = set()
 
-    for pattern in (_WITH_CUE, _BARE_ORDINAL):
+    for pattern in (_WITH_CUE, _TRAILING, _BARE_ORDINAL):
         for match in pattern.finditer(text):
             # Deduplicate on where the digits are, not where the match began:
             # "Lied Nummer 27" is found by both patterns at the same number, and
@@ -65,8 +87,8 @@ def find_in_text(text: str) -> list[int]:
             number = int(match.group(1))
             if MIN_NUMBER <= number <= MAX_NUMBER:
                 seen_at.add(match.start(1))
-                found.append(number)
-    return found
+                found.append((number, match.start(1)))
+    return sorted(found, key=lambda pair: pair[1])
 
 
 def _around(text: str, number: int, width: int) -> str:
@@ -93,13 +115,24 @@ def extract(document: dict[str, Any], *, context_chars: int = 90
     can list the hymns of a service and jump to where each was announced.
     """
     by_number: dict[int, dict[str, Any]] = {}
+    previous = ""
     for segment in document.get("segments", []):
         if segment.get("type") == "music":
+            previous = ""      # music breaks the sentence; do not read across it
             continue
         text = (segment.get("text") or "").strip()
         if not text:
             continue
-        for number in find_in_text(text):
+        # Prepend the tail of the previous segment so an announcement split
+        # across the boundary is still seen, then keep only the numbers whose
+        # digits fall inside this segment.
+        lead = previous[-LOOKBEHIND_CHARS:]
+        offset = len(lead) + 1 if lead else 0
+        combined = f"{lead} {text}" if lead else text
+        previous = text
+        for number, position in find_with_positions(combined):
+            if position < offset:
+                continue
             if number in by_number:
                 by_number[number]["mentions"] += 1
                 continue
@@ -134,13 +167,14 @@ def numbers_from_title(title: str) -> list[int]:
 def collect(document: dict[str, Any], title: str | None = None) -> list[dict[str, Any]]:
     """Every hymn of a service, from both sources that know about them.
 
-    Measured over 122 real services, 72% of the hymn numbers written in a
-    filename are never spoken in the recording at all - so the transcript alone
-    finds barely a quarter of them, and no amount of model would help, because
-    the number is simply not there. The titles carry them for 88 services.
+    The transcript is the trustworthy source: 103 hymns across 54 services,
+    each with the moment it was announced.
 
-    Both are therefore merged: the transcript supplies a timestamp to jump to,
-    the title supplies coverage. A hymn known from both keeps its timestamp.
+    Filenames are the second source and a weaker one. 88 of 122 carry a
+    dash-joined number group, but the operator does not vouch for them being
+    right, and they carry no timing - so they are merged in for coverage,
+    marked `source: "title"`, and rendered without a play control. Drop the
+    title argument to show only what the recording itself says.
     """
     spoken = {entry["number"]: {**entry, "source": "transcript"}
               for entry in extract(document)}
