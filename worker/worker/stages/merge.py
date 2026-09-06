@@ -190,6 +190,11 @@ def clip_to_speech(segment: dict[str, Any], speech_regions: list[dict[str, float
     if words:
         kept = [w for w in words if w["start"] < limit]
         clipped["words"] = kept or None
+        # Keep text and words agreeing. Downstream rebuilds text from words when
+        # it has them, but falls back to this field when it does not - so
+        # leaving the full text on a truncated segment would put minutes of
+        # transcript into a span of seconds.
+        clipped["text"] = " ".join(w["word"].strip() for w in kept).strip()
     return clipped
 
 

@@ -322,6 +322,15 @@ timings, and that ordering matters: applied to raw batched-pipeline bounds it
 deleted the Vaterunser, because a segment whose span happens to *cover* a hymn
 is not the same as a segment *of* a hymn.
 
+### Words alignment cannot place
+
+Forced alignment works from a wav2vec2 character vocabulary that has no digits,
+so words made only of them - hymn numbers, Bible verses, years - cannot be
+placed. They are kept anyway, timed between their aligned neighbours and marked
+`"aligned": false`, because transcript text is rebuilt from the word list and
+dropping them turned "Choral Nummer 122 singen" into "Choral Nummer singen".
+Their timestamps are approximate; every other word's are not.
+
 **Speakers merged or split**: pin `MAX_SPEAKERS` closer to reality. The defaults
 allow 1–12.
 

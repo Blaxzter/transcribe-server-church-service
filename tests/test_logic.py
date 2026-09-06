@@ -812,12 +812,13 @@ def test_monster_segment_is_clipped_to_its_speech_region() -> None:
     hymn - so the music-overlap check discarded a genuine announcement."""
     speech = [{"start": 2107.5, "end": 2117.5}]
     segment = {"start": 2107.5, "end": 2436.3,
-               "text": "es vermag, moechte sich nun von seinem Platz erheben",
+               "text": "es vermag erheben",
                "words": _words([("es", 2107.6, 2107.9), ("vermag", 2108.0, 2108.6),
                                 ("erheben", 2116.0, 2117.2)])}
     clipped = merge.clip_to_speech(segment, speech)
     assert clipped["end"] == 2117.5
     assert clipped["clipped"] is True
+    # Every word is inside the kept span, so the text is unchanged.
     assert clipped["text"] == segment["text"]
 
     # And now it survives the music check instead of being swallowed.
@@ -854,3 +855,60 @@ def test_clipping_drops_words_past_the_cut() -> None:
                "words": _words([("a", 1.0, 2.0), ("b", 50.0, 51.0)])}
     clipped = merge.clip_to_speech(segment, speech)
     assert [w["word"] for w in clipped["words"]] == ["a"]
+
+
+def test_clipping_keeps_text_and_words_in_agreement() -> None:
+    """Downstream rebuilds text from words when it has them but falls back to
+    the text field when it does not, so a truncated segment must not keep the
+    full text - that would put minutes of transcript into seconds of timeline."""
+    speech = [{"start": 0.0, "end": 10.0}]
+    segment = {"start": 0.0, "end": 100.0, "text": "hier gesprochen und dort gesungen",
+               "words": _words([("hier", 1.0, 1.4), ("gesprochen", 1.5, 2.4),
+                                ("und", 50.0, 50.2), ("dort", 50.3, 50.8),
+                                ("gesungen", 50.9, 51.5)])}
+    clipped = merge.clip_to_speech(segment, speech)
+    assert clipped["text"] == "hier gesprochen"
+    assert [w["word"] for w in clipped["words"]] == ["hier", "gesprochen"]
+    assert clipped["end"] == 10.0
+
+
+# ---------------------------------------------------------------------------
+# Alignment must not delete words it cannot align
+# ---------------------------------------------------------------------------
+def test_unalignable_words_are_kept_not_dropped() -> None:
+    """Digits are absent from the wav2vec2 vocabulary, so forced alignment could
+    not place them and used to omit them. Because transcript text is rebuilt
+    from the word list, that silently turned "Choral Nummer 122" into "Choral
+    Nummer" - and hymn numbers, Bible verses and years matter here."""
+    import numpy as _np
+    from worker.stages import align as align_stage
+
+    original = ["Choral", "Nummer", "122", "singen"]
+    bounds = {0: [1.0, 1.6], 1: [1.7, 2.3], 3: [3.1, 3.6]}
+    confidence = {0: [-0.1], 1: [-0.1], 3: [-0.1]}
+    start, end = 1.0, 3.6
+
+    next_start, upcoming = {}, end
+    for index in range(len(original) - 1, -1, -1):
+        if index in bounds:
+            upcoming = bounds[index][0]
+        next_start[index] = upcoming
+
+    words, cursor = [], start
+    for i, word in enumerate(original):
+        if i in bounds:
+            low, high = bounds[i]
+            low, high = max(start, low), min(end, max(high, low + 0.01))
+            cursor = high
+        else:
+            low = min(cursor, end)
+            high = min(end, max(next_start.get(i, end), low + 0.01))
+        words.append({"word": word, "start": round(low, 3), "end": round(high, 3)})
+
+    assert [w["word"] for w in words] == original, "no word may be dropped"
+    assert all(w["end"] >= w["start"] for w in words)
+    # The unalignable word sits between its neighbours, not at zero.
+    digit = words[2]
+    assert words[1]["end"] <= digit["start"] <= words[3]["start"]
+    assert " ".join(w["word"] for w in words) == "Choral Nummer 122 singen"
+    assert _np is not None and align_stage is not None

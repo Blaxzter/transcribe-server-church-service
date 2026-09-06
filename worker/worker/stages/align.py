@@ -151,18 +151,43 @@ def _align_segment(segment: dict[str, Any], audio: np.ndarray, model, vocab: dic
             bounds[word_index] = [span_start, span_end]
         confidence.setdefault(word_index, []).append(span["score"])
 
+    # Where the next alignable word begins, so unalignable ones can be slotted
+    # in front of it rather than dropped.
+    next_start: dict[int, float] = {}
+    upcoming = end
+    for index in range(len(original_words) - 1, -1, -1):
+        if index in bounds:
+            upcoming = bounds[index][0]
+        next_start[index] = upcoming
+
     words: list[dict[str, Any]] = []
+    cursor = start
     for word_index, word in enumerate(original_words):
-        if word_index not in bounds:
-            continue
-        low, high = bounds[word_index]
-        scores_for_word = confidence.get(word_index) or [0.0]
-        words.append({
+        if word_index in bounds:
+            low, high = bounds[word_index]
+            low = max(start, low)
+            high = min(end, max(high, low + 0.01))
+            scores_for_word = confidence.get(word_index) or [0.0]
+            probability = round(float(np.exp(np.mean(scores_for_word))), 3)
+            cursor = high
+        else:
+            # Not alignable: every character fell outside the wav2vec2 vocabulary.
+            # In practice that means digits - hymn numbers, Bible verses, years -
+            # and dropping them would delete "Choral Nummer 122" down to "Choral
+            # Nummer", because the transcript text is rebuilt from this list.
+            # Keep the word, timed between its neighbours, flagged unaligned.
+            low = min(cursor, end)
+            high = min(end, max(next_start.get(word_index, end), low + 0.01))
+            probability = 0.0
+        entry: dict[str, Any] = {
             "word": word,
-            "start": round(max(start, low), 3),
-            "end": round(min(end, max(high, low + 0.01)), 3),
-            "probability": round(float(np.exp(np.mean(scores_for_word))), 3),
-        })
+            "start": round(low, 3),
+            "end": round(high, 3),
+            "probability": probability,
+        }
+        if word_index not in bounds:
+            entry["aligned"] = False
+        words.append(entry)
     return words or None
 
 
