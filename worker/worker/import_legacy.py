@@ -33,6 +33,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -137,6 +138,13 @@ def import_entry(entry: dict[str, Any], audio: Path, *, copy_original: bool,
     transcript_path = directory / "transcript.json"
 
     if transcript_path.exists() and not force:
+        # The media work is done, but registration happens after this file is
+        # written - so a run that died in between would otherwise skip the entry
+        # forever and never create its job row. Registering is idempotent and
+        # cheap, so do it unconditionally and let re-runs converge.
+        _register(_payload_for(entry, job_id, audio,
+                               _duration_of(transcript_path),
+                               directory if copy_original else None))
         return "skipped"
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -165,22 +173,61 @@ def import_entry(entry: dict[str, Any], audio: Path, *, copy_original: bool,
     tmp.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     tmp.replace(transcript_path)
 
+    _register(_payload_for(entry, job_id, audio, duration,
+                           directory if copy_original else None))
+    return "imported"
+
+
+def _duration_of(transcript_path: Path) -> float:
+    try:
+        return float(json.loads(transcript_path.read_text(encoding="utf-8"))["duration"])
+    except (OSError, ValueError, KeyError):
+        return 0.0
+
+
+def _payload_for(entry: dict[str, Any], job_id: str, audio: Path, duration: float,
+                 original_dir: Path | None) -> dict[str, Any]:
     created_at, service_date = parse_created_at(entry.get("created_at", ""))
     payload = {
         "id": job_id,
         "title": nice_title(entry),
-        "original_filename": entry.get("file_name") or f"{entry['id']}{extension}",
+        "original_filename": entry.get("file_name") or f"{entry['id']}{audio.suffix}",
         "service_date": service_date,
         "duration_s": round(duration, 2),
         "size_bytes": audio.stat().st_size,
         "created_at": created_at,
     }
-    if copy_original:
-        payload["original_path"] = str(source)
+    if original_dir is not None:
+        kept = next(iter(original_dir.glob("original.*")), None)
+        if kept is not None:
+            payload["original_path"] = str(kept)
+    return payload
 
-    response = httpx.post(f"{API_URL}/api/jobs/import", json=payload, timeout=60)
-    response.raise_for_status()
-    return "imported"
+
+def _register(payload: dict[str, Any], attempts: int = 5) -> None:
+    """POST the job row, retrying transient API outages.
+
+    A batch of 121 recordings runs for half an hour. Restarting the API
+    container in that window - or any brief blip - should cost one retry, not
+    one lost recording that then has to be hunted down afterwards.
+    """
+    delay = 2.0
+    for attempt in range(1, attempts + 1):
+        try:
+            response = httpx.post(f"{API_URL}/api/jobs/import", json=payload,
+                                  timeout=60)
+            response.raise_for_status()
+            return
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+            # 4xx means the payload is wrong; retrying will not help.
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                raise
+            if attempt == attempts:
+                raise
+            log.warning("register %s failed (%s), retry %d/%d in %.0fs",
+                        payload["id"], type(exc).__name__, attempt, attempts, delay)
+            time.sleep(delay)
+            delay *= 2
 
 
 def main(argv: list[str] | None = None) -> int:
