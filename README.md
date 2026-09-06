@@ -420,6 +420,13 @@ docker compose up -d redis api worker   # backend on :8080
 cd web; npm run dev                     # frontend on :5173, proxies to :8080
 ```
 
+**Looking at a dialog without a backend.** `node web/scripts/preview-dialog.mjs`
+builds `web/src/__preview.tsx` — the export dialog against a stubbed API and a
+sample `.docx` — into a single self-contained `dist-preview/dialog.html` that
+opens anywhere, no server and no data. `?theme=dark` for the other theme. It
+exists because the browser tooling used to review this UI cannot reach
+localhost.
+
 ## Data layout
 
 ```

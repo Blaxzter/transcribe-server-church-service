@@ -36,8 +36,8 @@ export function ExportPreview({ preview }: { preview: Preview | null }) {
       return <Notice>{de.exportDialog.previewEmpty}</Notice>;
     }
     return (
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-muted/40">
-        <pre className="whitespace-pre-wrap break-words p-4 font-mono text-xs leading-relaxed">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <pre className="whitespace-pre-wrap break-words p-5 font-mono text-xs leading-relaxed">
           {preview.text}
         </pre>
       </div>
@@ -54,7 +54,7 @@ function Notice({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid min-h-0 flex-1 place-items-center rounded-md border border-border bg-muted/40">
+    <div className="grid min-h-0 flex-1 place-items-center">
       <p
         className={cn(
           "flex items-center gap-2 p-4 text-sm",
@@ -143,7 +143,7 @@ function DocxPaper({ blob }: { blob: Blob }) {
     // A stable scrollbar gutter keeps the ruler's width from changing the
     // moment the pages get tall enough to scroll, which would otherwise leave
     // the sheet a scrollbar too wide until the observer caught up.
-    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-muted/60 p-4 [scrollbar-gutter:stable]">
+    <div className="min-h-0 flex-1 overflow-auto p-5 [scrollbar-gutter:stable]">
       {failed && (
         <p className="flex items-center gap-2 text-sm text-destructive">
           <AlertCircle className="size-4 shrink-0" />

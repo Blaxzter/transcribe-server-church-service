@@ -27,8 +27,12 @@ export interface DialogProps {
   size?: keyof typeof SIZES;
   hideClose?: boolean;
   className?: string;
-  /** For a dialog whose body owns the scrolling instead of the panel. */
-  bodyClassName?: string;
+  /**
+   * Drop the panel — no background, border, padding, title row or footer — and
+   * let the children be the dialog. For a layout that is not one sheet of
+   * paper, such as two cards side by side. `title` is still announced.
+   */
+  bare?: boolean;
   initialFocusRef?: React.RefObject<HTMLElement>;
 }
 
@@ -46,7 +50,7 @@ export function Dialog({
   size = "sm",
   hideClose,
   className,
-  bodyClassName,
+  bare,
   initialFocusRef,
 }: DialogProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -122,35 +126,50 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
+        aria-describedby={description && !bare ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          "relative max-h-[calc(100vh-2rem)] w-full animate-panel-in overflow-y-auto rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-xl outline-none",
+          "relative max-h-[calc(100vh-2rem)] w-full animate-panel-in outline-none",
+          !bare &&
+            "overflow-y-auto rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-xl",
           SIZES[size],
           className,
         )}
       >
-        <h2 id={titleId} className="pr-8 text-base font-semibold">
-          {title}
-        </h2>
-        {description && (
-          <p id={descriptionId} className="mt-1.5 text-sm text-muted-foreground">
-            {description}
-          </p>
+        {bare ? (
+          <>
+            {/* The children are the whole dialog; all this owns is the title
+                the screen reader announces. */}
+            <h2 id={titleId} className="sr-only">
+              {title}
+            </h2>
+            {children}
+          </>
+        ) : (
+          <>
+            <h2 id={titleId} className="pr-8 text-base font-semibold">
+              {title}
+            </h2>
+            {description && (
+              <p id={descriptionId} className="mt-1.5 text-sm text-muted-foreground">
+                {description}
+              </p>
+            )}
+            {!hideClose && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-3 top-3 text-muted-foreground"
+                aria-label={de.a11y.closeDialog}
+                onClick={() => onOpenChange(false)}
+              >
+                <X />
+              </Button>
+            )}
+            {children && <div className="mt-4">{children}</div>}
+            {footer && <div className="mt-5 flex shrink-0 justify-end gap-2">{footer}</div>}
+          </>
         )}
-        {!hideClose && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute right-3 top-3 text-muted-foreground"
-            aria-label={de.a11y.closeDialog}
-            onClick={() => onOpenChange(false)}
-          >
-            <X />
-          </Button>
-        )}
-        {children && <div className={cn("mt-4", bodyClassName)}>{children}</div>}
-        {footer && <div className="mt-5 flex shrink-0 justify-end gap-2">{footer}</div>}
       </div>
     </div>,
     document.body,

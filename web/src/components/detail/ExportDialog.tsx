@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Music, Settings2, Type } from "lucide-react";
+import { Download, Loader2, Music, Settings2, Type, X } from "lucide-react";
 import {
   api,
   saveFile,
@@ -231,43 +231,12 @@ export function ExportDialog({
       onOpenChange={(open) => !open && !downloading && onClose()}
       title={title}
       description={managing ? undefined : de.exportDialog.description}
-      // The two-card layout owns the height: each card scrolls on its own, so
-      // a long section list never pushes the preview out of sight.
+      // Two cards standing on the backdrop, each scrolling on its own, so a
+      // long section list never pushes the preview out of sight. They are the
+      // dialog — there is no panel behind them to tint.
       size={managing ? "lg" : "2xl"}
-      className={
-        managing
-          ? undefined
-          : "flex h-[calc(100vh-2rem)] flex-col overflow-y-hidden bg-muted/60"
-      }
-      bodyClassName={managing ? undefined : "flex min-h-0 flex-1 flex-col overflow-y-auto"}
-      footer={
-        managing ? undefined : (
-          <>
-            <span className="mr-auto self-center text-xs text-muted-foreground">
-              {speakerIds.length > 0 && (
-                <>
-                  {selectedSpeakers.size} {de.common.of} {speakerIds.length}{" "}
-                  {de.exportDialog.selectionSpeakers}
-                </>
-              )}
-              {speakerIds.length > 0 && sections && " · "}
-              {sections && (
-                <>
-                  {selectedSections?.size ?? sections.length} {de.common.of} {sections.length}{" "}
-                  {de.exportDialog.selectionSections}
-                </>
-              )}
-            </span>
-            <Button variant="ghost" disabled={downloading} onClick={onClose}>
-              {de.common.cancel}
-            </Button>
-            <Button disabled={downloading || nothingSelected} onClick={() => void download()}>
-              {downloading ? <Loader2 className="animate-spin" /> : <Download />}
-              {downloading ? de.exportDialog.downloading : de.exportDialog.download}
-            </Button>
-          </>
-        )
-      }
+      bare={!managing}
+      className={managing ? undefined : "h-[calc(100vh-2rem)]"}
     >
       {managing === "templates" ? (
         <TemplateManager
@@ -283,9 +252,17 @@ export function ExportDialog({
           onBack={() => setManaging(null)}
         />
       ) : (
-        <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-2">
+        <div className="grid h-full gap-4 md:grid-cols-2">
           {/* ---------------------------------------------------- options */}
-          <Card className="min-h-0 space-y-6 overflow-y-auto p-5">
+          <Card className="flex min-h-0 flex-col overflow-hidden">
+            <div className="border-b border-border px-5 py-4">
+              <h2 className="text-base font-semibold">{de.exportDialog.title}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {de.exportDialog.description}
+              </p>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5">
             <Group title={de.exportDialog.format}>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Labelled label={de.exportDialog.format}>
@@ -532,34 +509,68 @@ export function ExportDialog({
                 </Labelled>
               </div>
             </Group>
+            </div>
+
+            <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+              {speakerIds.length > 0 && (
+                <>
+                  {selectedSpeakers.size} {de.common.of} {speakerIds.length}{" "}
+                  {de.exportDialog.selectionSpeakers}
+                </>
+              )}
+              {speakerIds.length > 0 && sections && " · "}
+              {sections && (
+                <>
+                  {selectedSections?.size ?? sections.length} {de.common.of} {sections.length}{" "}
+                  {de.exportDialog.selectionSections}
+                </>
+              )}
+            </div>
           </Card>
 
           {/* ---------------------------------------------------- preview */}
-          <Card
-            className="flex min-h-0 flex-col gap-3 overflow-hidden p-5"
-            aria-busy={building}
-          >
-            <div className="flex items-baseline gap-2">
+          <Card className="flex min-h-0 flex-col overflow-hidden" aria-busy={building}>
+            <div className="flex items-start gap-2 border-b border-border py-4 pl-5 pr-3">
               <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-semibold">{de.exportDialog.preview}</h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">
+                <h3 className="text-base font-semibold">{de.exportDialog.preview}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
                   {isDocx ? de.exportDialog.previewNote : de.exportDialog.previewNoteText}
                 </p>
               </div>
               {building && preview !== null && (
-                <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+                <Loader2 className="mt-1.5 size-4 shrink-0 animate-spin text-muted-foreground" />
               )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-mt-1 shrink-0 text-muted-foreground"
+                aria-label={de.a11y.closeDialog}
+                disabled={downloading}
+                onClick={onClose}
+              >
+                <X />
+              </Button>
             </div>
             {/* Rebuilding keeps the last page on screen, only dimmed: it is the
                 same document with one switch flipped, and blanking the panel
                 on every click made the dialog feel like it was reloading. */}
             <div
               className={cn(
-                "flex min-h-0 flex-1 flex-col transition-opacity",
+                "flex min-h-0 flex-1 flex-col bg-muted/40 transition-opacity",
                 building && preview !== null && "opacity-50",
               )}
             >
               <ExportPreview preview={preview} />
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+              <Button variant="ghost" disabled={downloading} onClick={onClose}>
+                {de.common.cancel}
+              </Button>
+              <Button disabled={downloading || nothingSelected} onClick={() => void download()}>
+                {downloading ? <Loader2 className="animate-spin" /> : <Download />}
+                {downloading ? de.exportDialog.downloading : de.exportDialog.download}
+              </Button>
             </div>
           </Card>
         </div>
