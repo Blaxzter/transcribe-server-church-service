@@ -52,9 +52,10 @@ Step "ffmpeg in the worker" {
 }
 
 Step "Logic tests" {
-    # torch is needed because the music stage imports it at module level.
+    # These mirror the worker's module-level imports: torch for the music stage,
+    # httpx for summarize, fastapi/python-docx for the API's export helpers.
     uv run --no-project --python 3.12 --with pytest --with numpy --with torch `
-        --with fastapi --with python-docx python -m pytest tests/
+        --with httpx --with fastapi --with python-docx python -m pytest tests/
 }
 
 Write-Host ""
