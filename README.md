@@ -132,17 +132,16 @@ with:
 | Zone | Zone | Read |
 
 The script creates a self-hosted application for the hostname and an allow
-policy restricted to those email addresses, with a **24-hour session** — long
-enough that a 90-minute upload cannot be interrupted by a re-auth redirect
-mid-transfer. Login is by **one-time PIN**, so there is no identity provider to
-set up: she gets a code by email.
+policy restricted to those email addresses, with a **one-month session**
+(`-SessionDuration`, see the note below on why). Login is by **one-time PIN**, so
+there is no identity provider to set up: she gets a code by email.
 
 Re-running it is safe; it reuses an existing application rather than duplicating.
 
 Prefer clicking? Zero Trust → Access → Applications → Add a self-hosted
 application for `freddy-transcribe.fabraham.dev`, one Allow policy with
-*Emails* = both addresses, session duration 24h. That is exactly what the script
-does.
+*Emails* = both addresses, session duration one month. That is exactly what the
+script does.
 
 ### Making login as easy as possible
 
@@ -369,30 +368,63 @@ data/
 
 ## What has actually been verified
 
-Verified end to end on this machine:
+Measured on real recordings from the archive, not on synthetic fixtures.
 
-- GPU passthrough, all nine stages, a job going `queued → done`
-- Resumable chunked upload, including a stale-PATCH retry and format rejection
-- German ASR quality — it transcribed German read by an *English* TTS voice
-  nearly perfectly, which is a harder input than a real recording
-- Diarization separating two voices and giving the same speaker the same label
-  across two separate passages
-- Forced alignment running and refining word timings
-- All five exports, transcript editing, speaker renaming, progress over SSE
-- 44 unit tests (`.\scripts\verify.ps1`)
+### Against the previous system, same audio
 
-**Not yet verified — check these on your first real recording:**
+A 58-minute service (2026-08-30) reprocessed and compared with what the old
+system produced for the identical recording:
 
-1. **Music thresholds.** The synthetic organ used for testing was not convincing
-   to the AudioSet tagger, so `MUSIC_THRESHOLD` / `MUSIC_OVER_SPEECH` have never
-   met a real pipe organ or congregation. See the tuning section above; this is
-   the one setting most likely to need a nudge.
-2. **VRAM at full length.** The pipeline was verified on a 76-second file, where
-   peak usage was comfortable (7.4 GB free of 8.6 GB). Diarization memory grows
-   with recording length, so watch `nvidia-smi` during the first 90-minute job.
-   If it OOMs, drop `ASR_BATCH_SIZE` and lower `MAX_SPEAKERS`.
-3. **Real-world timing.** The 10–15 minute estimate for a 90-minute service is
-   extrapolated, not measured.
+| | old | new |
+|---|---|---|
+| Hallucinated segments | **54** | **0** |
+| Speakers | none | 3 |
+| Music labelled | none | 9 regions |
+| Words | 2454 | 2066 |
+
+The old transcript opened with `Untertitelung des ZDF, 2020` repeated over the
+organ prelude. The new one opens with the first actual words, at 6:48, where the
+music stops.
+
+Across the whole imported archive, **67 of 121 transcripts (55%) contain
+hallucinations — 539 segments**. That is the failure this project exists to
+prevent, counted rather than assumed.
+
+### Music detection, checked in both directions
+
+Not just "did it find music" but "did it eat speech". For each detected region,
+what the old system transcribed there:
+
+- `47.0–57.1 min [Orgelspiel]` — old system: 41 segments, **40 of them junk**.
+  Correctly silenced.
+- `0.0–6.8 min [Musik]` — 12 of 13 junk. Correct.
+- `9.5–13.2 min [Gemeindegesang]` — 90 words of *"Alleluia, Alleluia…"*. Real
+  hymn lyrics, labelled rather than transcribed. That is the intended trade.
+
+Two services with very different shapes, which is the useful part: 57% of
+windows tagged as music in one, **26% in the other** (41.4 minutes of speech in
+72.7). The detector is not blanket-tagging.
+
+### Everything else
+
+GPU passthrough and all nine stages; resumable upload including stale-PATCH
+retry and format rejection; forced alignment; all five exports; editing, speaker
+renaming, SSE progress; the legacy import converging on re-run; 66 unit tests
+(`.\scriptserify.ps1`).
+
+**Timing, measured:** ~13 minutes for a 58-minute service, ~9 minutes when the
+summary is skipped. Peak VRAM stayed comfortable throughout (7.4 GB free of
+8.6 GB) — including diarization of a 72-minute recording, which was the memory
+risk worth watching.
+
+### The one place real speech is still lost
+
+Short spoken announcements immediately beside music get absorbed into the music
+region — *"Wir singen die Strophen 1 bis 4 und 6."* sits inside a `[Musik]` span
+and does not survive. This is a resolution limit: a three-second announcement
+inside a ten-second classification window does not change that window's verdict.
+Halving `MUSIC_HOP_S` (5 → 2.5) doubles boundary resolution for roughly a minute
+more per job, if that trade is worth it to you.
 
 ## Known limits
 
