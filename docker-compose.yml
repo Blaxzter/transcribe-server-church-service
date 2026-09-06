@@ -1,0 +1,98 @@
+name: transcribe
+
+x-common-env: &common-env
+  TZ: Europe/Berlin
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATA_DIR: /data
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      <<: *common-env
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-8589934592}
+    ports:
+      # localhost only: the Cloudflare Tunnel service reaches this, the LAN does not.
+      - "127.0.0.1:${HOST_PORT:-8080}:8000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: worker
+      dockerfile: Dockerfile
+    environment:
+      <<: *common-env
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /cache/hf
+      TORCH_HOME: /cache/torch
+      ASR_MODEL: ${ASR_MODEL:-large-v3}
+      ASR_COMPUTE_TYPE: ${ASR_COMPUTE_TYPE:-int8_float16}
+      ASR_BATCH_SIZE: ${ASR_BATCH_SIZE:-8}
+      DIARIZATION_MODEL: ${DIARIZATION_MODEL:-pyannote/speaker-diarization-community-1}
+      MUSIC_MODEL: ${MUSIC_MODEL:-MIT/ast-finetuned-audioset-10-10-0.4593}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    volumes:
+      - ./data:/data
+      - model-cache:/cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    environment:
+      # Release VRAM the instant a request finishes - the 8 GB budget has no slack.
+      OLLAMA_KEEP_ALIVE: "0"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  model-cache:
+  ollama-data:

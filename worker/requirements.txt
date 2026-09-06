@@ -1,0 +1,12 @@
+# Linux PyPI torch wheels are CUDA builds by default - no extra index needed.
+# pyannote.audio 4.x requires torch >= 2.8, which sets the floor for everything.
+torch==2.8.0
+torchaudio==2.8.0
+
+# faster-whisper runs on CTranslate2, not torch, so it has no say in the above.
+faster-whisper>=1.1.1,<2
+pyannote.audio==4.0.0
+transformers>=4.46,<5
+
+arq==0.26.3
+httpx==0.28.1

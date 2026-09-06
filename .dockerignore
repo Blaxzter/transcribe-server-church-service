@@ -1,0 +1,7 @@
+data/
+migrate-stuff/
+.git/
+node_modules/
+web/dist/
+**/__pycache__/
+.venv/

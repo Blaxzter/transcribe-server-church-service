@@ -1,0 +1,96 @@
+# --- secrets ----------------------------------------------------------------
+# .env holds HF_TOKEN. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+.cf-token
+*.pem
+*.key
+*_rsa
+*_ed25519
+credentials*.json
+*.credentials.json
+
+# --- recordings and derived data ---------------------------------------------
+# Church audio never belongs in a repo: originals, the 16 kHz working copy, the
+# Opus proxy, waveform peaks, transcripts and the SQLite database all live here.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- migration archive -------------------------------------------------------
+# Recordings and the metadata export pulled off the previous system (~12 GB).
+# The audio files here have no extension while in flight, so the media patterns
+# below do not catch them - the whole directory is excluded.
+migrate-stuff/
+
+# --- operational leftovers ---------------------------------------------------
+# Backups written by scripts/setup-tunnel.ps1 and by hand during the rename from
+# the old project name, plus any local scratch.
+*.bak
+*.bak-*
+*.backup
+*.orig
+*.rej
+scratch/
+tmp/
+temp/
+*.tmp
+
+# --- audio and media, wherever they land -------------------------------------
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.opus
+*.aac
+*.wma
+*.mp4
+*.mov
+*.mkv
+*.webm
+
+# --- python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# --- node / frontend ---------------------------------------------------------
+node_modules/
+web/dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+
+# --- logs --------------------------------------------------------------------
+*.log
+logs/
+
+# --- editors and OS ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- tooling -----------------------------------------------------------------
+.claude/settings.local.json
