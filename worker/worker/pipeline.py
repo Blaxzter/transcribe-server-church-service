@@ -49,10 +49,21 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def find_original(directory: Path) -> Path:
+    """The best available source audio for this job.
+
+    Imported jobs keep no original - only the Opus proxy - so without this
+    fallback "Neu verarbeiten" on an imported recording fails outright. Opus at
+    48 kbps mono loses little that matters downstream, since every stage works
+    from 16 kHz mono anyway.
+    """
     matches = sorted(directory.glob("original.*"))
-    if not matches:
-        raise FileNotFoundError(f"Keine Originaldatei in {directory}")
-    return matches[0]
+    if matches:
+        return matches[0]
+    proxy = directory / "audio.opus"
+    if proxy.exists():
+        log.info("%s: no original kept, decoding from the Opus proxy", directory.name)
+        return proxy
+    raise FileNotFoundError(f"Keine Originaldatei in {directory}")
 
 
 def process(job_id: str) -> dict[str, Any]:
@@ -76,7 +87,10 @@ def process(job_id: str) -> dict[str, Any]:
             log.info("job %s: reusing existing normalised audio", job_id)
         else:
             reporter.stage("normalize")
-            _, _, duration = normalize.run(original, directory, reporter.progress)
+            # When the proxy is the source (an imported job being reprocessed)
+            # it must not be regenerated from itself.
+            _, _, duration = normalize.run(original, directory, reporter.progress,
+                                           make_opus=original != opus_path)
             reporter.stage("peaks")
             peaks.run(wav_path, directory, duration)
 

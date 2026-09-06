@@ -700,3 +700,38 @@ def test_speaker_label_still_used_when_speakers_exist() -> None:
                          "start": 0, "end": 5, "text": "Guten Morgen."}]}
     assert "Pfarrerin: Guten Morgen." in exports.render_txt(
         {"title": "x", "service_date": None}, doc)
+
+
+# ---------------------------------------------------------------------------
+# Reprocessing an imported job
+# ---------------------------------------------------------------------------
+def test_find_original_falls_back_to_the_opus_proxy(tmp_path) -> None:
+    """Imported jobs keep no original, so without this "Neu verarbeiten" on an
+    imported recording fails outright."""
+    from worker import pipeline
+
+    (tmp_path / "audio.opus").write_bytes(b"x")
+    assert pipeline.find_original(tmp_path).name == "audio.opus"
+
+    (tmp_path / "original.mp3").write_bytes(b"x")
+    assert pipeline.find_original(tmp_path).name == "original.mp3"
+
+
+def test_find_original_raises_when_there_is_nothing(tmp_path) -> None:
+    from worker import pipeline
+    import pytest as _pytest
+
+    with _pytest.raises(FileNotFoundError):
+        pipeline.find_original(tmp_path)
+
+
+def test_normalize_refuses_to_overwrite_its_own_source(tmp_path) -> None:
+    """Reading and writing audio.opus in one ffmpeg call would destroy the only
+    copy of the audio an imported job has."""
+    from worker.stages import normalize
+    import pytest as _pytest
+
+    proxy = tmp_path / "audio.opus"
+    proxy.write_bytes(b"not really opus")
+    with _pytest.raises(normalize.AudioError, match="Refusing to overwrite"):
+        normalize.run(proxy, tmp_path, make_opus=True)

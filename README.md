@@ -217,8 +217,14 @@ simply be repeated.
 
 **Imported transcripts have no speaker labels, music markers or summary**, because
 the source has no such data. The UI says so on the job page rather than letting
-it look like diarization failed. Running such a job through the normal *Neu
-verarbeiten* button produces all three, at the cost of the full pipeline.
+it look like diarization failed.
+
+*Neu verarbeiten* on an imported job produces all three. With `--originals skip`
+there is no original left, so the pipeline decodes the **Opus proxy** instead —
+worth knowing, though it costs little in practice: every stage works from 16 kHz
+mono, and 48 kbps Opus preserves that band well. Import with `--originals copy`
+if you would rather reprocess from the untouched source. Reprocessing also
+rewrites `transcript.json`, so any manual edits to that job are lost.
 
 ## Architecture
 

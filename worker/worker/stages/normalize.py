@@ -44,11 +44,20 @@ def probe_duration(path: Path) -> float:
     return duration
 
 
-def run(original: Path, out_dir: Path, on_progress: Callable[[float], None] | None = None
-        ) -> tuple[Path, Path, float]:
-    duration = probe_duration(original)
+def run(original: Path, out_dir: Path, on_progress: Callable[[float], None] | None = None,
+        *, make_opus: bool = True) -> tuple[Path, Path, float]:
+    """Decode to the pipeline WAV and (optionally) the playback proxy.
+
+    `make_opus=False` exists for reprocessing an imported job, where the Opus
+    proxy is itself the only source audio: writing it while reading it would
+    destroy the file.
+    """
     wav_path = out_dir / "audio.wav"
     opus_path = out_dir / "audio.opus"
+    # Checked before any work: ffmpeg would truncate the source on open.
+    if make_opus and original.resolve() == opus_path.resolve():
+        raise AudioError("Refusing to overwrite the source audio")
+    duration = probe_duration(original)
 
     command = [
         "ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
@@ -56,13 +65,16 @@ def run(original: Path, out_dir: Path, on_progress: Callable[[float], None] | No
         # Pipeline audio: untouched levels.
         "-map", "0:a:0", "-ac", "1", "-ar", str(SAMPLE_RATE),
         "-c:a", "pcm_s16le", str(wav_path),
+    ]
+    if make_opus:
         # Playback proxy: loudness-normalised so quiet passages are audible on
         # laptop speakers.
-        "-map", "0:a:0", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-        "-ac", "1", "-c:a", "libopus", "-b:a", "48k", "-vbr", "on",
-        "-application", "audio", str(opus_path),
-        "-progress", "pipe:1", "-nostats",
-    ]
+        command += [
+            "-map", "0:a:0", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-ac", "1", "-c:a", "libopus", "-b:a", "48k", "-vbr", "on",
+            "-application", "audio", str(opus_path),
+        ]
+    command += ["-progress", "pipe:1", "-nostats"]
 
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, bufsize=1)
