@@ -1,10 +1,24 @@
 @import "tailwindcss";
 
+/*
+ * The resolved theme is written to <html data-theme> — by the boot script in
+ * index.html before first paint, then by ThemeProvider. `dark:` has to follow
+ * that attribute instead of the media query Tailwind defaults to.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-primary: var(--primary);
@@ -15,12 +29,20 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 :root {
@@ -29,6 +51,8 @@
   --foreground: oklch(0.22 0.02 260);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.22 0.02 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.02 260);
   --muted: oklch(0.965 0.005 255);
   --muted-foreground: oklch(0.52 0.02 260);
   --primary: oklch(0.52 0.16 258);
@@ -39,17 +63,60 @@
   --accent-foreground: oklch(0.28 0.02 260);
   --destructive: oklch(0.58 0.19 25);
   --destructive-foreground: oklch(0.99 0.005 250);
+  --success: oklch(0.5 0.13 155);
+  --success-foreground: oklch(0.99 0.005 150);
+  --warning: oklch(0.55 0.13 70);
+  --warning-foreground: oklch(0.99 0.005 90);
+  --info: oklch(0.52 0.16 258);
+  --info-foreground: oklch(0.99 0.005 250);
   --border: oklch(0.91 0.006 255);
   --input: oklch(0.91 0.006 255);
   --ring: oklch(0.62 0.13 258);
+  --overlay: oklch(0.25 0.02 260 / 0.4);
+}
+
+/*
+ * Dark palette. Kept in two places on purpose: [data-theme="dark"] is what the
+ * app actually uses, the media query only covers the moment before scripts run
+ * (or a browser with scripting disabled). Change both together.
+ */
+:root[data-theme="dark"] {
+  --background: oklch(0.19 0.015 260);
+  --foreground: oklch(0.94 0.008 255);
+  --card: oklch(0.235 0.018 262);
+  --card-foreground: oklch(0.94 0.008 255);
+  --popover: oklch(0.255 0.018 262);
+  --popover-foreground: oklch(0.94 0.008 255);
+  --muted: oklch(0.27 0.018 262);
+  --muted-foreground: oklch(0.68 0.015 258);
+  --primary: oklch(0.68 0.15 258);
+  --primary-foreground: oklch(0.17 0.02 260);
+  --secondary: oklch(0.28 0.018 262);
+  --secondary-foreground: oklch(0.94 0.008 255);
+  --accent: oklch(0.3 0.02 262);
+  --accent-foreground: oklch(0.94 0.008 255);
+  --destructive: oklch(0.68 0.17 25);
+  --destructive-foreground: oklch(0.98 0.005 250);
+  --success: oklch(0.76 0.14 158);
+  --success-foreground: oklch(0.18 0.03 158);
+  --warning: oklch(0.8 0.13 80);
+  --warning-foreground: oklch(0.2 0.04 80);
+  --info: oklch(0.72 0.13 258);
+  --info-foreground: oklch(0.17 0.02 260);
+  --border: oklch(0.32 0.018 262);
+  --input: oklch(0.34 0.018 262);
+  --ring: oklch(0.6 0.13 258);
+  --overlay: oklch(0.12 0.015 260 / 0.6);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: oklch(0.19 0.015 260);
     --foreground: oklch(0.94 0.008 255);
     --card: oklch(0.235 0.018 262);
     --card-foreground: oklch(0.94 0.008 255);
+    --popover: oklch(0.255 0.018 262);
+    --popover-foreground: oklch(0.94 0.008 255);
     --muted: oklch(0.27 0.018 262);
     --muted-foreground: oklch(0.68 0.015 258);
     --primary: oklch(0.68 0.15 258);
@@ -58,30 +125,53 @@
     --secondary-foreground: oklch(0.94 0.008 255);
     --accent: oklch(0.3 0.02 262);
     --accent-foreground: oklch(0.94 0.008 255);
-    --destructive: oklch(0.62 0.19 25);
+    --destructive: oklch(0.68 0.17 25);
     --destructive-foreground: oklch(0.98 0.005 250);
+    --success: oklch(0.76 0.14 158);
+    --success-foreground: oklch(0.18 0.03 158);
+    --warning: oklch(0.8 0.13 80);
+    --warning-foreground: oklch(0.2 0.04 80);
+    --info: oklch(0.72 0.13 258);
+    --info-foreground: oklch(0.17 0.02 260);
     --border: oklch(0.32 0.018 262);
     --input: oklch(0.34 0.018 262);
     --ring: oklch(0.6 0.13 258);
+    --overlay: oklch(0.12 0.015 260 / 0.6);
   }
 }
 
 * {
   border-color: var(--border);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 20%, transparent)
+    transparent;
 }
 
 html {
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
 }
 
 body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-sans);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--primary) 25%, transparent);
 }
 
 /* wavesurfer injects its own shadow-DOM host; make it fill our container. */
@@ -94,6 +184,53 @@ body {
   50% { opacity: 0.45; }
 }
 
+@keyframes transcribe-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes transcribe-panel-in {
+  from { opacity: 0; transform: translateY(0.75rem) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes transcribe-pop-in {
+  from { opacity: 0; transform: translateY(-0.25rem) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes transcribe-toast-in {
+  from { opacity: 0; transform: translateY(0.75rem); }
+  to { opacity: 1; transform: none; }
+}
+
 .animate-soft-pulse {
   animation: transcribe-pulse 1.8s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: transcribe-fade-in 0.15s ease-out;
+}
+
+.animate-panel-in {
+  animation: transcribe-panel-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-pop-in {
+  animation: transcribe-pop-in 0.12s ease-out;
+}
+
+.animate-toast-in {
+  animation: transcribe-toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

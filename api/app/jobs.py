@@ -91,6 +91,10 @@ def _serialize(row: Any) -> dict[str, Any]:
     job["has_peaks"] = (directory / "peaks.json").exists()
     job["has_transcript"] = (directory / "transcript.json").exists()
     job["has_summary"] = (directory / "summary.json").exists()
+    # The music stage always writes this file, so its absence is what tells the
+    # list apart from an imported job - the transcript's own "source" marker is
+    # too expensive to read for every row.
+    job["has_music"] = (directory / "music.json").exists()
     # Imported jobs keep only the Opus proxy by default, so the UI must not
     # offer a download that would 404.
     job["has_original"] = bool(job["original_path"]) and Path(job["original_path"]).exists()

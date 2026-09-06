@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WaveSurfer from "wavesurfer.js";
-import { Pause, Play, Rewind, FastForward } from "lucide-react";
+import { AlertCircle, FastForward, Pause, Play, Rewind, RotateCcw } from "lucide-react";
 import { api, type Transcript } from "@/lib/api";
 import { cn, formatTime } from "@/lib/utils";
+import { useTheme } from "@/lib/theme";
 import { de } from "@/i18n/de";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 
 export interface PlayerControls {
   seekTo: (seconds: number) => void;
@@ -22,6 +24,19 @@ interface WaveformProps {
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 const SKIP_SECONDS = 15;
 
+/** Colours live in CSS tokens, so they have to be read back for the canvas. */
+function waveColors() {
+  const styles = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string) =>
+    styles.getPropertyValue(name).trim() || fallback;
+  const primary = read("--primary", "#2563eb");
+  return {
+    waveColor: read("--muted-foreground", "#888"),
+    progressColor: primary,
+    cursorColor: primary,
+  };
+}
+
 /**
  * Waveform + transport.
  *
@@ -37,12 +52,46 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
   const waveRef = useRef<WaveSurfer | null>(null);
   const onTimeRef = useRef(onTime);
   onTimeRef.current = onTime;
+  const appliedColorsRef = useRef("");
+  const lastEmittedRef = useRef(-1);
 
+  const { resolvedTheme } = useTheme();
   const [ready, setReady] = useState(false);
+  const [failure, setFailure] = useState<"load" | "play" | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(transcript?.duration ?? 0);
+
+  /**
+   * wavesurfer drives "timeupdate" from a requestAnimationFrame loop, so it
+   * fires ~60×/s while playing. `onTime` re-renders the whole detail page
+   * including the virtualized transcript, and the clock only ever shows whole
+   * seconds, so a tick that stays inside the current half-second is pure
+   * waste. Half rather than whole seconds keeps the transcript highlight from
+   * trailing the audio by an audible amount.
+   * `force` is for seeks, which must land immediately.
+   */
+  const emitTime = useCallback((time: number, force = false) => {
+    const tick = Math.floor(time * 2);
+    if (!force && tick === lastEmittedRef.current) return;
+    lastEmittedRef.current = tick;
+    setCurrentTime(time);
+    onTimeRef.current?.(time);
+  }, []);
+
+  // playPause()/play() reject when the media never loads. With server peaks the
+  // transport is enabled before the audio element has metadata, so a file that
+  // is still transcoding or gone surfaces here rather than as an unhandled
+  // rejection behind a play button that silently does nothing.
+  const startPlayback = useCallback((toggle: boolean) => {
+    const wave = waveRef.current;
+    if (!wave) return;
+    void (toggle ? wave.playPause() : wave.play()).catch(() => {
+      setFailure("play");
+      setPlaying(false);
+    });
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -50,12 +99,13 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
 
     let cancelled = false;
     let instance: WaveSurfer | null = null;
+    setReady(false);
+    setFailure(null);
+    setPlaying(false);
+    setCurrentTime(0);
+    lastEmittedRef.current = -1;
 
     (async () => {
-      const styles = getComputedStyle(document.documentElement);
-      const muted = styles.getPropertyValue("--muted-foreground").trim() || "#888";
-      const primary = styles.getPropertyValue("--primary").trim() || "#2563eb";
-
       let peaks: Float32Array[] | undefined;
       let peakDuration: number | undefined;
       try {
@@ -71,15 +121,16 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
       }
       if (cancelled) return;
 
+      const colors = waveColors();
+      appliedColorsRef.current = JSON.stringify(colors);
+
       instance = WaveSurfer.create({
         container,
         url: api.audioUrl(jobId),
         peaks,
         duration: peakDuration,
         height: 88,
-        waveColor: muted,
-        progressColor: primary,
-        cursorColor: primary,
+        ...colors,
         cursorWidth: 2,
         barWidth: 2,
         barGap: 1,
@@ -99,10 +150,15 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
       // metadata, so treat decode-free init as ready too.
       if (peaks) setReady(true);
 
-      instance.on("timeupdate", (time: number) => {
-        setCurrentTime(time);
-        onTimeRef.current?.(time);
+      instance.on("error", () => {
+        if (cancelled) return;
+        setFailure("load");
+        setPlaying(false);
       });
+      instance.on("timeupdate", (time: number) => emitTime(time));
+      // A seek (waveform click, drag, transport) must show up at once, even
+      // when it lands inside the second the throttle has already emitted.
+      instance.on("seeking", (time: number) => emitTime(time, true));
       instance.on("play", () => setPlaying(true));
       instance.on("pause", () => setPlaying(false));
       instance.on("finish", () => setPlaying(false));
@@ -113,23 +169,44 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
       instance?.destroy();
       waveRef.current = null;
     };
-  }, [jobId]);
+  }, [jobId, emitTime]);
 
-  const seekTo = useCallback((seconds: number) => {
-    const wave = waveRef.current;
-    if (!wave) return;
-    wave.setTime(Math.max(0, seconds));
-    setCurrentTime(seconds);
-  }, []);
+  // wavesurfer bakes the colours into the canvas at create time, so a theme
+  // switch has to push them back in. ThemeProvider writes <html data-theme> from
+  // its own effect, which runs after this one — the frame delay makes sure the
+  // new token values are the ones being read.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const wave = waveRef.current;
+      if (!wave) return;
+      const colors = waveColors();
+      const key = JSON.stringify(colors);
+      if (key === appliedColorsRef.current) return;
+      appliedColorsRef.current = key;
+      wave.setOptions(colors);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [resolvedTheme, ready]);
+
+  const seekTo = useCallback(
+    (seconds: number) => {
+      const wave = waveRef.current;
+      if (!wave) return;
+      const target = Math.max(0, seconds);
+      wave.setTime(target);
+      emitTime(target, true);
+    },
+    [emitTime],
+  );
 
   useEffect(() => {
     if (!ready) return;
     onReady?.({
       seekTo,
-      play: () => waveRef.current?.play(),
+      play: () => startPlayback(false),
       pause: () => waveRef.current?.pause(),
     });
-  }, [ready, seekTo, onReady]);
+  }, [ready, seekTo, startPlayback, onReady]);
 
   const skip = (delta: number) => {
     const wave = waveRef.current;
@@ -145,37 +222,46 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
 
   const ribbon = useMemo(() => buildRibbon(transcript), [transcript]);
   const total = duration || transcript?.duration || 0;
+  const usable = ready && failure !== "load";
 
   return (
     <div className="space-y-3">
       <div className="relative">
-        <div ref={containerRef} className="waveform-host w-full" />
-        {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-            <span className="animate-soft-pulse">{de.player.loading}</span>
+        <div
+          ref={containerRef}
+          className={cn("waveform-host w-full", !usable && "opacity-40")}
+        />
+        {!usable && (
+          <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            {failure ? (
+              <>
+                <AlertCircle className="size-4 text-destructive" />
+                <span>
+                  {failure === "load" ? de.player.failed : de.player.playbackFailed}
+                </span>
+              </>
+            ) : (
+              <span className="animate-soft-pulse">{de.player.loading}</span>
+            )}
           </div>
         )}
       </div>
 
       {ribbon.length > 0 && total > 0 && (
-        <div
-          className="relative h-2.5 w-full overflow-hidden rounded-full bg-secondary"
-          role="presentation"
-        >
+        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-secondary">
           {ribbon.map((band, index) => (
             <button
               key={index}
               type="button"
               title={band.title}
+              aria-label={`${band.title} — ${formatTime(band.start)}`}
               onClick={() => seekTo(band.start)}
-              className={cn(
-                "absolute top-0 h-full cursor-pointer border-0 p-0",
-                band.kind === "music" && "opacity-45",
-              )}
+              className="absolute top-0 h-full cursor-pointer border-0 p-0 transition-opacity hover:opacity-100"
               style={{
                 left: `${(band.start / total) * 100}%`,
                 width: `${Math.max(((band.end - band.start) / total) * 100, 0.15)}%`,
                 background: band.color,
+                opacity: band.kind === "music" ? 0.45 : 1,
               }}
             />
           ))}
@@ -183,27 +269,64 @@ export function Waveform({ jobId, transcript, onReady, onTime }: WaveformProps) 
       )}
 
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={() => skip(-SKIP_SECONDS)}
-                aria-label={de.player.skipBack} disabled={!ready}>
-          <Rewind />
-        </Button>
-        <Button size="icon" onClick={() => waveRef.current?.playPause()}
-                aria-label={playing ? de.player.pause : de.player.play} disabled={!ready}>
+        <Tooltip label={de.player.restart}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => seekTo(0)}
+            aria-label={de.player.restart}
+            disabled={!usable}
+          >
+            <RotateCcw />
+          </Button>
+        </Tooltip>
+        <Tooltip label={de.player.skipBack}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => skip(-SKIP_SECONDS)}
+            aria-label={de.player.skipBack}
+            disabled={!usable}
+          >
+            <Rewind />
+          </Button>
+        </Tooltip>
+        <Button
+          size="icon"
+          onClick={() => startPlayback(true)}
+          aria-label={playing ? de.player.pause : de.player.play}
+          disabled={!usable}
+        >
           {playing ? <Pause /> : <Play />}
         </Button>
-        <Button variant="ghost" size="icon" onClick={() => skip(SKIP_SECONDS)}
-                aria-label={de.player.skipForward} disabled={!ready}>
-          <FastForward />
-        </Button>
+        <Tooltip label={de.player.skipForward}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => skip(SKIP_SECONDS)}
+            aria-label={de.player.skipForward}
+            disabled={!usable}
+          >
+            <FastForward />
+          </Button>
+        </Tooltip>
 
         <span className="ml-1 font-mono text-sm tabular-nums text-muted-foreground">
           {formatTime(currentTime)} / {formatTime(total)}
         </span>
 
-        <Button variant="outline" size="sm" className="ml-auto font-mono"
-                onClick={changeSpeed} aria-label={de.player.speed} disabled={!ready}>
-          {speed.toLocaleString("de-DE")}×
-        </Button>
+        <Tooltip label={de.player.speed} className="ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            className="font-mono"
+            onClick={changeSpeed}
+            aria-label={de.player.speed}
+            disabled={!usable}
+          >
+            {speed.toLocaleString("de-DE")}×
+          </Button>
+        </Tooltip>
       </div>
     </div>
   );
@@ -228,10 +351,10 @@ function buildRibbon(transcript: Transcript | null): Band[] {
   const bands: Band[] = [];
   for (const segment of transcript.segments) {
     const isMusic = segment.type === "music";
-    const key = isMusic ? segment.marker ?? "music" : segment.speaker ?? "unknown";
+    const key = isMusic ? segment.marker ?? de.transcript.music : segment.speaker ?? "unknown";
+    const title = keyTitle(transcript, key, isMusic);
     const previous = bands[bands.length - 1];
-    if (previous && previous.title === keyTitle(transcript, key, isMusic)
-        && segment.start - previous.end < 1.5) {
+    if (previous && previous.title === title && segment.start - previous.end < 1.5) {
       previous.end = segment.end;
       continue;
     }
@@ -242,7 +365,7 @@ function buildRibbon(transcript: Transcript | null): Band[] {
       color: isMusic
         ? "var(--color-muted-foreground)"
         : transcript.speakers[key]?.color ?? "var(--color-muted-foreground)",
-      title: keyTitle(transcript, key, isMusic),
+      title,
     });
   }
   return bands;
@@ -250,5 +373,5 @@ function buildRibbon(transcript: Transcript | null): Band[] {
 
 function keyTitle(transcript: Transcript, key: string, isMusic: boolean): string {
   if (isMusic) return key;
-  return transcript.speakers[key]?.label ?? key;
+  return transcript.speakers[key]?.label ?? de.transcript.speakerUnknown;
 }

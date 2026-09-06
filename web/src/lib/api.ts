@@ -25,6 +25,8 @@ export interface Job {
   has_peaks: boolean;
   has_transcript: boolean;
   has_summary: boolean;
+  /** Absent on API builds older than the legacy-badge change. */
+  has_music?: boolean;
   has_original: boolean;
 }
 

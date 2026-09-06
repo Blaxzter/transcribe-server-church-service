@@ -1,89 +1,136 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Check, Download, Loader2, RefreshCw } from "lucide-react";
-import {
-  api,
-  subscribeToJob,
-  type Job,
-  type Stage,
-  type Transcript,
-} from "@/lib/api";
+import { AlertCircle, ArrowLeft, FileText, RefreshCw } from "lucide-react";
+import { api, subscribeToJob, type Job, type JobStatus, type Transcript } from "@/lib/api";
 import { de } from "@/i18n/de";
 import { cn } from "@/lib/utils";
 import { Waveform, type PlayerControls } from "@/components/Waveform";
 import { TranscriptView } from "@/components/Transcript";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
+import {
+  DetailSidebar,
+  defaultDetailTab,
+  type DetailTab,
+} from "@/components/detail/DetailSidebar";
+import {
+  DetailSkeleton,
+  SidebarSkeleton,
+  TranscriptSkeleton,
+} from "@/components/detail/DetailSkeleton";
+import { FailurePanel } from "@/components/detail/FailurePanel";
+import { JobHeader, type SaveState } from "@/components/detail/JobHeader";
+import { ProgressPanel } from "@/components/detail/ProgressPanel";
+import { DETAIL_GRID, SIDEBAR_PANE, TRANSCRIPT_PANE } from "@/components/detail/panes";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
 
-const STAGE_ORDER: Stage[] = [
-  "normalize", "peaks", "music", "vad", "asr", "align", "diarize", "merge", "summarize",
-];
+const SAVED_FLASH_MS = 1800;
 
-const EXPORTS: { format: string; label: string }[] = [
-  { format: "docx", label: de.exportMenu.docx },
-  { format: "md", label: de.exportMenu.md },
-  { format: "txt", label: de.exportMenu.txt },
-  { format: "srt", label: de.exportMenu.srt },
-  { format: "vtt", label: de.exportMenu.vtt },
-];
-
-type SaveState = "idle" | "saving" | "saved" | "error";
+/** Statuses the job never leaves — nothing more will arrive over the stream. */
+const TERMINAL: JobStatus[] = ["done", "failed", "canceled"];
 
 export function JobDetailPage() {
   const { id = "" } = useParams();
+  const { toast } = useToast();
   const [job, setJob] = useState<Job | null>(null);
   const [doc, setDoc] = useState<Transcript | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const [docError, setDocError] = useState<string | null>(null);
+  const [docAttempt, setDocAttempt] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [tab, setTab] = useState<DetailTab | null>(null);
   const controlsRef = useRef<PlayerControls | null>(null);
+  const savedTimer = useRef<number | undefined>(undefined);
+
+  const status = job?.status;
+  const hasTranscript = job?.has_transcript ?? false;
+  const legacy = doc?.source === "legacy-import";
+
+  useEffect(() => () => window.clearTimeout(savedTimer.current), []);
 
   // --- data ---------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
+    setJob(null);
+    setDoc(null);
+    setJobError(null);
+    setDocError(null);
+    setTab(null);
     api
       .getJob(id)
       .then((value) => !cancelled && setJob(value))
-      .catch(() => !cancelled && setError(de.errors.notFound));
+      .catch(() => !cancelled && setJobError(de.job.notFound));
     return () => {
       cancelled = true;
     };
   }, [id]);
 
   useEffect(() => {
-    if (!job?.has_transcript) return;
+    if (!hasTranscript) return;
     let cancelled = false;
+    setDocError(null);
     api
       .getTranscript(id)
       .then((value) => !cancelled && setDoc(value))
-      .catch(() => !cancelled && setError(de.errors.loadFailed));
+      .catch(() => !cancelled && setDocError(de.errors.loadFailed));
     return () => {
       cancelled = true;
     };
-  }, [id, job?.has_transcript]);
+  }, [id, hasTranscript, docAttempt]);
 
-  // Live progress while the job is still being processed.
+  // The sidebar opens on whatever this recording actually has, decided once —
+  // as soon as the transcript state is known — and owned by the user after
+  // that. Deriving it on every render swapped the visible panel from
+  // Zusammenfassung to Export under the user the moment a legacy import (no
+  // summary, no speakers) resolved.
+  const transcriptSettled =
+    status === "done" && (!hasTranscript || doc !== null || docError !== null);
   useEffect(() => {
-    if (!job || job.status === "done" || job.status === "failed") return;
+    if (!transcriptSettled) return;
+    setTab((current) => current ?? defaultDetailTab(doc));
+  }, [transcriptSettled, doc]);
+
+  // Live progress while the job is still being processed. The stream carries
+  // partial jobs, so the finished job is fetched once in full at the end.
+  useEffect(() => {
+    if (!status || TERMINAL.includes(status)) return;
     return subscribeToJob(id, (event) => {
       setJob((current) => (current ? { ...current, ...event } : current));
+      if (event.status && TERMINAL.includes(event.status)) {
+        void api
+          .getJob(id)
+          .then((value) => {
+            setJob(value);
+            // A reprocessed job keeps has_transcript, so ask for the new one.
+            setDocAttempt((attempt) => attempt + 1);
+          })
+          .catch(() => undefined);
+      }
     });
-  }, [id, job?.status]);
+  }, [id, status]);
 
   // --- editing ------------------------------------------------------------
-  const withSaveState = useCallback(async (action: () => Promise<Transcript>) => {
-    setSaveState("saving");
-    try {
-      const updated = await action();
-      setDoc(updated);
-      setSaveState("saved");
-      window.setTimeout(() => setSaveState("idle"), 1800);
-    } catch {
-      setSaveState("error");
-    }
+  const flashSaved = useCallback(() => {
+    setSaveState("saved");
+    window.clearTimeout(savedTimer.current);
+    savedTimer.current = window.setTimeout(() => setSaveState("idle"), SAVED_FLASH_MS);
   }, []);
+
+  const withSaveState = useCallback(
+    async (action: () => Promise<Transcript>) => {
+      setSaveState("saving");
+      try {
+        setDoc(await action());
+        flashSaved();
+      } catch {
+        setSaveState("error");
+        toast({ title: de.toast.saveFailed, variant: "destructive" });
+      }
+    },
+    [flashSaved, toast],
+  );
 
   const editSegment = useCallback(
     (segmentId: string, text: string) =>
@@ -99,11 +146,28 @@ export function JobDetailPage() {
 
   const saveTitle = useCallback(
     async (title: string, serviceDate: string | null) => {
-      const updated = await api.patchJob(id, { title, service_date: serviceDate });
-      setJob(updated);
+      setSaveState("saving");
+      try {
+        setJob(await api.patchJob(id, { title, service_date: serviceDate }));
+        flashSaved();
+      } catch {
+        setSaveState("error");
+        toast({ title: de.toast.saveFailed, variant: "destructive" });
+      }
     },
-    [id],
+    [id, flashSaved, toast],
   );
+
+  const retry = useCallback(async () => {
+    try {
+      const updated = await api.retryJob(id);
+      setDoc(null);
+      setJob(updated);
+      toast({ title: de.toast.retryQueued });
+    } catch {
+      toast({ title: de.toast.retryFailed, variant: "destructive" });
+    }
+  }, [id, toast]);
 
   const handleReady = useCallback((controls: PlayerControls) => {
     controlsRef.current = controls;
@@ -114,12 +178,19 @@ export function JobDetailPage() {
     setCurrentTime(seconds);
   }, []);
 
-  if (error) {
+  if (jobError) {
     return (
       <Shell>
-        <Card className="p-8 text-center">
-          <AlertCircle className="mx-auto mb-3 size-6 text-destructive" />
-          <p>{error}</p>
+        <Card>
+          <EmptyState
+            icon={<AlertCircle />}
+            title={jobError}
+            action={
+              <Link to="/" className={buttonVariants({ variant: "outline" })}>
+                {de.nav.back}
+              </Link>
+            }
+          />
         </Card>
       </Shell>
     );
@@ -128,34 +199,41 @@ export function JobDetailPage() {
   if (!job) {
     return (
       <Shell>
-        <p className="py-16 text-center text-sm text-muted-foreground">…</p>
+        <DetailSkeleton />
       </Shell>
     );
   }
 
   return (
     <Shell>
-      <JobHeader job={job} saveState={saveState} onSave={saveTitle} />
+      <JobHeader
+        job={job}
+        legacy={legacy}
+        saveState={saveState}
+        onSave={(title, serviceDate) => void saveTitle(title, serviceDate)}
+      />
 
-      {job.status === "failed" && <FailurePanel job={job} onRetry={setJob} />}
+      {job.status === "failed" && <FailurePanel job={job} onRetry={retry} />}
 
       {(job.status === "queued" || job.status === "running") && <ProgressPanel job={job} />}
 
       {job.status === "done" && (
-        <div className="space-y-4">
-          <Card>
-            <CardContent className="pt-5">
-              <Waveform
-                jobId={id}
-                transcript={doc}
-                onReady={handleReady}
-                onTime={setCurrentTime}
-              />
-            </CardContent>
-          </Card>
+        <>
+          {job.has_audio && (
+            <Card>
+              <CardContent className="pt-5">
+                <Waveform
+                  jobId={id}
+                  transcript={doc}
+                  onReady={handleReady}
+                  onTime={setCurrentTime}
+                />
+              </CardContent>
+            </Card>
+          )}
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-            <Card className="flex h-[min(70vh,44rem)] flex-col overflow-hidden">
+          <div className={DETAIL_GRID}>
+            <Card className={cn("flex flex-col overflow-hidden", TRANSCRIPT_PANE)}>
               {doc ? (
                 <TranscriptView
                   doc={doc}
@@ -164,27 +242,48 @@ export function JobDetailPage() {
                   onEditSegment={editSegment}
                   onRenameSpeaker={renameSpeaker}
                 />
+              ) : docError ? (
+                <EmptyState
+                  className="m-auto"
+                  icon={<AlertCircle />}
+                  title={docError}
+                  action={
+                    <Button
+                      variant="outline"
+                      onClick={() => setDocAttempt((attempt) => attempt + 1)}
+                    >
+                      <RefreshCw />
+                      {de.common.retry}
+                    </Button>
+                  }
+                />
+              ) : hasTranscript ? (
+                <TranscriptSkeleton />
               ) : (
-                <p className="p-8 text-center text-sm text-muted-foreground">…</p>
+                <EmptyState
+                  className="m-auto"
+                  icon={<FileText />}
+                  title={de.transcript.empty}
+                />
               )}
             </Card>
 
-            <div className="space-y-4">
-              {doc?.source === "legacy-import" && (
-                <Card className="border-dashed">
-                  <CardContent className="pt-5">
-                    <p className="text-sm text-muted-foreground">
-                      {de.transcript.imported}
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
-              <SummaryPanel doc={doc} />
-              <SpeakerLegend doc={doc} />
-              <ExportPanel jobId={id} hasOriginal={job.has_original} />
-            </div>
+            {tab ? (
+              <DetailSidebar
+                job={job}
+                doc={doc}
+                legacy={legacy}
+                value={tab}
+                onValueChange={setTab}
+                className={SIDEBAR_PANE}
+              />
+            ) : (
+              <Card className={cn("flex flex-col overflow-hidden", SIDEBAR_PANE)}>
+                <SidebarSkeleton />
+              </Card>
+            )}
           </div>
-        </div>
+        </>
       )}
     </Shell>
   );
@@ -202,231 +301,5 @@ function Shell({ children }: { children: React.ReactNode }) {
       </Link>
       {children}
     </div>
-  );
-}
-
-function JobHeader({
-  job,
-  saveState,
-  onSave,
-}: {
-  job: Job;
-  saveState: SaveState;
-  onSave: (title: string, serviceDate: string | null) => Promise<void>;
-}) {
-  const [title, setTitle] = useState(job.title);
-  const [serviceDate, setServiceDate] = useState(job.service_date ?? "");
-
-  useEffect(() => {
-    setTitle(job.title);
-    setServiceDate(job.service_date ?? "");
-  }, [job.id, job.title, job.service_date]);
-
-  const commit = () => {
-    if (title !== job.title || (serviceDate || null) !== job.service_date) {
-      void onSave(title, serviceDate || null);
-    }
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Input
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        onBlur={commit}
-        placeholder={de.job.titlePlaceholder}
-        className="h-10 max-w-md flex-1 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
-      />
-      <Input
-        type="date"
-        value={serviceDate}
-        onChange={(event) => setServiceDate(event.target.value)}
-        onBlur={commit}
-        className="w-40"
-      />
-      <span
-        className={cn(
-          "text-xs text-muted-foreground transition-opacity",
-          saveState === "idle" && "opacity-0",
-        )}
-      >
-        {saveState === "saving" && de.job.saving}
-        {saveState === "saved" && de.job.saved}
-        {saveState === "error" && de.job.saveFailed}
-      </span>
-    </div>
-  );
-}
-
-function ProgressPanel({ job }: { job: Job }) {
-  const activeIndex = job.stage ? STAGE_ORDER.indexOf(job.stage) : -1;
-  return (
-    <Card>
-      <CardContent className="space-y-4 pt-5">
-        <div className="flex items-center gap-2">
-          <Loader2 className="size-4 animate-spin text-primary" />
-          <p className="text-sm">
-            {de.job.processing} <strong>{de.job.processingTime}</strong>
-          </p>
-        </div>
-        <Progress value={job.progress} indeterminate={job.status === "queued"} />
-        <ol className="grid gap-1.5 sm:grid-cols-3">
-          {STAGE_ORDER.map((stage, index) => (
-            <li
-              key={stage}
-              className={cn(
-                "flex items-center gap-2 text-sm",
-                index < activeIndex && "text-muted-foreground line-through",
-                index === activeIndex && "font-medium text-foreground",
-                index > activeIndex && "text-muted-foreground opacity-60",
-              )}
-            >
-              {index < activeIndex ? (
-                <Check className="size-3.5 shrink-0" />
-              ) : index === activeIndex ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin" />
-              ) : (
-                <span className="size-3.5 shrink-0 rounded-full border border-current opacity-40" />
-              )}
-              {de.stages[stage]}
-            </li>
-          ))}
-        </ol>
-      </CardContent>
-    </Card>
-  );
-}
-
-function FailurePanel({ job, onRetry }: { job: Job; onRetry: (job: Job) => void }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <Card className="border-destructive/40">
-      <CardContent className="space-y-3 pt-5">
-        <div className="flex items-center gap-2 font-medium text-destructive">
-          <AlertCircle className="size-4" />
-          {de.job.failedTitle}
-        </div>
-        {job.error && (
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">
-            {job.error}
-          </pre>
-        )}
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              onRetry(await api.retryJob(job.id));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <RefreshCw className={cn(busy && "animate-spin")} />
-          {de.jobs.retry}
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SummaryPanel({ doc }: { doc: Transcript | null }) {
-  const outline = doc?.outline ?? [];
-  if (!doc?.summary) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{de.summary.title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">{de.summary.missing}</p>
-        </CardContent>
-      </Card>
-    );
-  }
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{de.summary.title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-sm leading-relaxed">{doc.summary}</p>
-        {outline.length > 0 && (
-          <>
-            <h4 className="text-sm font-medium">{de.summary.outline}</h4>
-            <ul className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-              {outline.map((item, index) => (
-                <li key={index}>{item}</li>
-              ))}
-            </ul>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function SpeakerLegend({ doc }: { doc: Transcript | null }) {
-  const speakers = useMemo(() => Object.entries(doc?.speakers ?? {}), [doc]);
-  if (!speakers.length) return null;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{de.jobs.speakers}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-wrap gap-2">
-        {speakers.map(([id, speaker]) => (
-          <span
-            key={id}
-            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-            style={{ color: speaker.color, background: `${speaker.color}1a` }}
-          >
-            <span className="size-1.5 rounded-full" style={{ background: speaker.color }} />
-            {speaker.label}
-          </span>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ExportPanel({ jobId, hasOriginal }: { jobId: string; hasOriginal: boolean }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{de.exportMenu.title}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {EXPORTS.map((entry) => (
-          <Button
-            key={entry.format}
-            variant="outline"
-            size="sm"
-            className="justify-start"
-
-            onClick={() => {
-              window.location.href = api.exportUrl(jobId, entry.format);
-            }}
-          >
-            <Download />
-            {entry.label}
-          </Button>
-        ))}
-        {hasOriginal && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="justify-start"
-            onClick={() => {
-              window.location.href = api.originalUrl(jobId);
-            }}
-          >
-            <Download />
-            {de.exportMenu.original}
-          </Button>
-        )}
-      </CardContent>
-    </Card>
   );
 }

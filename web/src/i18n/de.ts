@@ -9,23 +9,63 @@ export const de = {
   },
 
   nav: {
-    jobs: "Aufnahmen",
     back: "Zurück zur Übersicht",
+    skipToContent: "Zum Inhalt springen",
+  },
+
+  theme: {
+    label: "Darstellung",
+    light: "Hell",
+    dark: "Dunkel",
+    system: "System",
+  },
+
+  /** Generic verbs and labels; reuse these before inventing a new key. */
+  common: {
+    cancel: "Abbrechen",
+    confirm: "Bestätigen",
+    retry: "Erneut versuchen",
+    reload: "Seite neu laden",
+    search: "Suchen",
+    clear: "Eingabe löschen",
+    sort: "Sortierung",
+    filter: "Filter",
+    of: "von",
+    dismiss: "Ausblenden",
+  },
+
+  units: {
+    minuteShort: "Min",
+    hourShort: "Std",
+    speakers: "Sprecher",
+    recordingOne: "Aufnahme",
+    recordingMany: "Aufnahmen",
+  },
+
+  /** Headings for the age-grouped recordings list. */
+  time: {
+    today: "Heute",
+    yesterday: "Gestern",
+    thisWeek: "Diese Woche",
+    lastWeek: "Letzte Woche",
+    thisMonth: "Dieser Monat",
+    earlier: "Früher",
+    unknownDate: "Ohne Datum",
   },
 
   upload: {
     title: "Aufnahme hochladen",
     dropzone: "Datei hierher ziehen",
     dropzoneHint: "oder klicken zum Auswählen",
+    dropActive: "Loslassen zum Hochladen",
     formats: "MP3, WAV, M4A, FLAC, OGG, MP4, MOV und weitere",
-    button: "Datei auswählen",
-    uploading: "Wird hochgeladen",
     remaining: "verbleibend",
     cancel: "Abbrechen",
     retry: "Erneut versuchen",
     failed: "Upload fehlgeschlagen",
+    done: "Upload abgeschlossen",
+    queued: "Die Verarbeitung startet gleich.",
     resumeHint: "Der Upload wird bei einer Unterbrechung automatisch fortgesetzt.",
-    tooLarge: "Die Datei ist zu groß.",
     unsupported: "Dieses Dateiformat wird nicht unterstützt.",
   },
 
@@ -36,21 +76,43 @@ export const de = {
     duration: "Dauer",
     speakers: "Sprecher",
     created: "Hochgeladen",
-    open: "Öffnen",
     delete: "Löschen",
-    deleteConfirm: "Diese Aufnahme mit allen Daten wirklich löschen?",
+    deleteTitle: "Aufnahme löschen",
+    deleteDescription:
+      "Transkript, Zusammenfassung und Audio werden unwiderruflich entfernt.",
+    deleteAction: "Endgültig löschen",
     retry: "Neu verarbeiten",
+    retryTitle: "Aufnahme neu verarbeiten",
+    retryDescription:
+      "Die Aufnahme wird erneut durch die Verarbeitung geschickt. Bearbeitungen am Transkript gehen dabei verloren.",
+    retryAction: "Neu verarbeiten",
     untitled: "Ohne Titel",
+    search: "Aufnahmen durchsuchen…",
+    searchEmpty: "Keine Aufnahme gefunden.",
+    searchEmptyHint: "Andere Suchbegriffe oder einen anderen Filter versuchen.",
+    resetFilters: "Filter zurücksetzen",
+    filterAll: "Alle",
+    filterDone: "Fertig",
+    filterActive: "In Arbeit",
+    filterFailed: "Fehlgeschlagen",
+    sortNewest: "Neueste zuerst",
+    sortOldest: "Älteste zuerst",
+    sortTitle: "Nach Titel",
+    sortLongest: "Längste zuerst",
+    totalDuration: "Gesamtdauer",
+    legacy: "Übernommen",
   },
 
+  /** Indexed dynamically by JobStatus — every member of that union needs a key. */
   status: {
     queued: "In Warteschlange",
     running: "Wird verarbeitet",
     done: "Fertig",
     failed: "Fehlgeschlagen",
     canceled: "Abgebrochen",
-    uploading: "Wird hochgeladen",
   },
+
+  /** Indexed dynamically by Stage — every member of that union needs a key. */
 
   stages: {
     normalize: "Audio wird aufbereitet",
@@ -65,14 +127,29 @@ export const de = {
   },
 
   job: {
+    notFound: "Aufnahme nicht gefunden.",
     processing: "Die Aufnahme wird verarbeitet. Das dauert bei einem Gottesdienst",
     processingTime: "etwa 10 bis 15 Minuten.",
     failedTitle: "Verarbeitung fehlgeschlagen",
     titlePlaceholder: "Titel der Aufnahme",
-    datePlaceholder: "Datum",
+    titleLabel: "Titel",
+    dateLabel: "Datum des Gottesdienstes",
     saved: "Gespeichert",
     saving: "Wird gespeichert…",
     saveFailed: "Konnte nicht gespeichert werden",
+    file: "Datei",
+    size: "Größe",
+    language: "Sprache",
+    finished: "Fertiggestellt",
+    segments: "Abschnitte",
+  },
+
+  /** Sidebar tabs on the detail page. */
+  detail: {
+    tabSummary: "Zusammenfassung",
+    tabSpeakers: "Sprecher",
+    tabExport: "Export",
+    tabDetails: "Details",
   },
 
   player: {
@@ -82,28 +159,37 @@ export const de = {
     skipForward: "15 Sekunden vor",
     speed: "Geschwindigkeit",
     loading: "Wellenform wird geladen…",
+    restart: "Von vorn abspielen",
+    failed: "Audio konnte nicht geladen werden.",
+    playbackFailed: "Wiedergabe konnte nicht gestartet werden.",
   },
 
   transcript: {
-    title: "Transkript",
     search: "Im Transkript suchen…",
     noResults: "Keine Treffer.",
+    resultCount: "Treffer",
     editHint: "Zum Bearbeiten in einen Absatz klicken.",
     renameSpeaker: "Sprecher umbenennen",
     speakerName: "Name",
+    speakerUnknown: "Unbekannt",
     save: "Speichern",
     cancel: "Abbrechen",
     music: "Musik",
-    imported: "Aus dem alten System übernommen — ohne Sprecher, Musikmarkierungen und Zusammenfassung.",
-    reprocess: "Neu verarbeiten, um Sprecher und Musik zu erkennen",
+    imported:
+      "Aus dem alten System übernommen — ohne Sprecher, Musikmarkierungen und Zusammenfassung.",
     segments: "Abschnitte",
     followPlayback: "Wiedergabe folgen",
+    jumpTo: "An diese Stelle springen",
+    copyAll: "Transkript kopieren",
+    edited: "Bearbeitet",
+    empty: "Dieses Transkript enthält keinen Text.",
   },
 
   summary: {
     title: "Zusammenfassung",
     outline: "Gliederung",
     missing: "Für diese Aufnahme wurde keine Zusammenfassung erstellt.",
+    copy: "Zusammenfassung kopieren",
   },
 
   exportMenu: {
@@ -116,11 +202,27 @@ export const de = {
     original: "Originaldatei herunterladen",
   },
 
+  /** Short feedback shown in the toast stack. */
+  toast: {
+    deleted: "Aufnahme gelöscht",
+    deleteFailed: "Aufnahme konnte nicht gelöscht werden",
+    saveFailed: "Änderung konnte nicht gespeichert werden",
+    copied: "In die Zwischenablage kopiert",
+    copyFailed: "Kopieren nicht möglich",
+    exportStarted: "Export wird vorbereitet",
+    retryQueued: "Aufnahme wird neu verarbeitet",
+    retryFailed: "Neuverarbeitung konnte nicht gestartet werden",
+  },
+
   errors: {
-    generic: "Etwas ist schiefgelaufen.",
-    notFound: "Nicht gefunden.",
     loadFailed: "Konnte nicht geladen werden.",
-    retry: "Erneut versuchen",
+    boundaryTitle: "Die Ansicht konnte nicht dargestellt werden.",
+    boundaryHint: "Ein Neuladen der Seite behebt das meistens.",
+  },
+
+  a11y: {
+    closeDialog: "Dialog schließen",
+    loading: "Inhalt wird geladen",
   },
 } as const;
 
