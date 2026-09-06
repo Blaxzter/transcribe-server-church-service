@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "api"))
 
 from app import hymns  # noqa: E402
 from worker import hallucinations  # noqa: E402
-from worker.stages import merge, vad  # noqa: E402
+from worker.stages import asr, merge, vad  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +498,28 @@ def test_narration_genuinely_inside_music_is_dropped() -> None:
     kept, dropped = merge._drop_inside_music([inside], music)
     assert kept == []
     assert dropped[0]["drop_reason"] == "inside-music"
+
+
+def test_announcement_at_the_edge_of_music_survives() -> None:
+    """The 2026-08-27 service, 2029 s: "Und zum Schluss ein Dankgebet" was said 2.4 s before
+    the detected end of a 145 s organ passage and 3.3 s of the next announcement
+    ran past the detected start of the following one. The detector's edges are
+    a 5 s hop coarse; what lies within a hop of an edge is not hymn narration."""
+    music = [{"start": 1887.5, "end": 2032.5, "marker": "[Orgelspiel]"}]
+    closing = {"start": 2029.11, "end": 2030.07, "text": "Und zum Schluss ein Dankgebet."}
+    running_on = {"start": 1883.57, "end": 1890.81,
+                  "text": "Ihr Lieben, wir singen gemeinsam den Choral Nummer 117. "
+                          "Gott ruft nach einer Jugend und wir singen alle drei Strophen."}
+    kept, dropped = merge._drop_inside_music([closing, running_on], music)
+    assert kept == [closing, running_on]
+    assert dropped == []
+
+
+def test_edge_margin_does_not_rescue_a_short_hymn_narration() -> None:
+    music = [{"start": 100.0, "end": 120.0, "marker": "[Orgelspiel]"}]
+    inside = {"start": 106.0, "end": 114.0, "text": "Lobe den Herren"}
+    kept, dropped = merge._drop_inside_music([inside], music)
+    assert kept == [] and len(dropped) == 1
 
 
 def test_long_segment_splits_on_sentence_ends() -> None:
@@ -1099,3 +1121,56 @@ def test_only_verified_hymns_are_reported() -> None:
     assert all(h["at"] is not None and h["segment_id"] for h in got)
     assert not hasattr(hymns, "numbers_from_title")
     assert not hasattr(hymns, "collect")
+
+
+# ---------------------------------------------------------------------------
+# ASR clip planning
+# ---------------------------------------------------------------------------
+def _regions(*spans: tuple[float, float]) -> list[dict[str, float]]:
+    return [{"start": float(a), "end": float(b)} for a, b in spans]
+
+
+def test_everything_that_fits_is_one_clip() -> None:
+    regions = _regions((0, 4), (4.5, 10), (11, 20))
+    assert asr.plan_clips(regions, window=30.0) == [{"start": 0.0, "end": 20.0}]
+
+
+def test_clip_ends_at_the_widest_pause_not_the_window_edge() -> None:
+    """The greedy packer would fill the window and leave the 1 s fragment at
+    28-29 s hanging off its end, which is exactly the fragment Whisper drops.
+    The cut belongs at the 2 s pause before it, so the fragment starts the
+    next clip together with its continuation."""
+    regions = _regions((0, 10), (10.5, 18), (18.4, 26), (28, 29), (29.3, 40))
+    clips = asr.plan_clips(regions, window=30.0, max_gap=3.0, min_fill=0.5)
+    assert clips == [{"start": 0.0, "end": 26.0}, {"start": 28.0, "end": 40.0}]
+
+
+def test_cut_prefers_a_pause_once_the_window_is_half_full() -> None:
+    """A wide pause early on must not win over a narrower one later, or clips
+    would shrink to a few seconds and the ASR would take twice as long."""
+    regions = _regions((0, 5), (7.5, 15), (15.3, 22), (23, 27), (27.2, 33))
+    clips = asr.plan_clips(regions, window=30.0, max_gap=3.0, min_fill=0.5)
+    assert clips[0] == {"start": 0.0, "end": 22.0}
+
+
+def test_a_long_silence_always_ends_a_clip() -> None:
+    regions = _regions((0, 5), (6, 8), (20, 25))
+    clips = asr.plan_clips(regions, window=30.0, max_gap=3.0)
+    assert clips == [{"start": 0.0, "end": 8.0}, {"start": 20.0, "end": 25.0}]
+
+
+def test_no_clip_exceeds_the_window_and_every_region_is_covered_once() -> None:
+    regions = _regions(*[(i * 3.0, i * 3.0 + 2.0) for i in range(60)])
+    clips = asr.plan_clips(regions, window=30.0, max_gap=3.0, min_fill=0.5)
+    assert all(c["end"] - c["start"] <= 30.0 for c in clips)
+    assert clips[0]["start"] == regions[0]["start"]
+    assert clips[-1]["end"] == regions[-1]["end"]
+    for earlier, later in zip(clips, clips[1:]):
+        assert later["start"] > earlier["end"]
+    covered = sum(1 for r in regions
+                  if any(c["start"] <= r["start"] and r["end"] <= c["end"] for c in clips))
+    assert covered == len(regions)
+
+
+def test_no_regions_means_no_clips() -> None:
+    assert asr.plan_clips([]) == []

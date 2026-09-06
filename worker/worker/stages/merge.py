@@ -11,6 +11,7 @@ import bisect
 import logging
 from typing import Any
 
+from ..config import MUSIC_HOP_S
 from . import vad as vad_stage
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,14 @@ _MIN_MUSIC_AFTER_TRIM_S = 2.5
 # A segment this deeply inside detected music is the model narrating a hymn.
 # Only meaningful once bounds have been tightened to the real words.
 _MUSIC_OVERLAP_DROP = 0.5
+# How far a music region's edges are ignored when judging that. The detector
+# classifies 10 s windows every 5 s, so an edge can sit a hop past where the
+# music actually starts or stops, and what lives in that band is announcements:
+# on the 2026-08-27 service "Und zum Schluss ein Dankgebet" was spoken 2.4 s
+# before the end of a region and "Gott ruft nach einer Jugend, und wir singen
+# alle drei Strophen" ran 3.3 s past the start of the next. Both are inside the
+# region as detected and neither is a hymn.
+_MUSIC_EDGE_MARGIN_S = MUSIC_HOP_S
 
 # How long a silence a single utterance may span before a segment is cut at it.
 # Measured across three real services: ordinary speaking pauses have a 90th
@@ -93,6 +102,16 @@ def run(*, job_id: str, duration: float, language: str,
         asr_segments: list[dict[str, Any]], turns: list[dict[str, Any]],
         music_regions: list[dict[str, Any]],
         speech_regions: list[dict[str, float]] | None = None) -> dict[str, Any]:
+    """Assemble the document.
+
+    `speech_regions` should be the VAD's raw detection, music included. The
+    music-subtracted regions look the same almost everywhere, but their edges
+    are where the music detector's 5 s windows say the music starts, and
+    clipping a segment there deleted "ruft nach einer Jugend, und wir singen
+    alle drei Strophen" - an announcement that simply ran on into the region.
+    Speech is cut at silence the VAD heard, never at a music edge; what sits
+    over music is judged by _drop_inside_music instead.
+    """
     index = SpeakerIndex(turns)
 
     # Order matters. Bounds must be corrected before anything judges a segment
@@ -276,10 +295,13 @@ def _drop_inside_music(segments: list[dict[str, Any]],
     """
     if not music_regions:
         return segments, []
+    # Judge against the core of each region, not its coarse edges.
+    cores = [{"start": r["start"] + _MUSIC_EDGE_MARGIN_S,
+              "end": r["end"] - _MUSIC_EDGE_MARGIN_S} for r in music_regions]
+    cores = [c for c in cores if c["end"] > c["start"]]
     kept, dropped = [], []
     for segment in segments:
-        covered = vad_stage.covered_fraction(segment["start"], segment["end"],
-                                             music_regions)
+        covered = vad_stage.covered_fraction(segment["start"], segment["end"], cores)
         if covered > _MUSIC_OVERLAP_DROP:
             dropped.append({**segment, "drop_reason": "inside-music"})
         else:

@@ -54,8 +54,12 @@ Step "ffmpeg in the worker" {
 Step "Logic tests" {
     # These mirror the worker's module-level imports: torch for the music stage,
     # httpx for summarize, fastapi/python-docx for the API's export helpers.
+    # The export tests drive the API through its router, so they also need arq
+    # (queue, imported by app.jobs) and python-multipart, which FastAPI requires
+    # to declare the template upload route at all.
     uv run --no-project --python 3.12 --with pytest --with numpy --with torch `
-        --with httpx --with redis --with fastapi --with python-docx python -m pytest tests/
+        --with httpx --with redis --with fastapi --with python-docx `
+        --with arq --with python-multipart python -m pytest tests/
 }
 
 Write-Host ""

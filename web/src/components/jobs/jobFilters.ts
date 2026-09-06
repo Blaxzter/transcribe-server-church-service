@@ -67,7 +67,7 @@ function haystack(job: Job): string {
     .toLowerCase();
 }
 
-/** All terms must match, in any order — "2026 schermutzki" finds the service. */
+/** All terms must match, in any order — "2026 ostern" finds the service. */
 function matchesQuery(job: Job, terms: string[]): boolean {
   if (!terms.length) return true;
   const text = haystack(job);

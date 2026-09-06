@@ -4,6 +4,71 @@ Written at the end of the session that built the pipeline, for whoever picks up
 this specific bug. Everything here was measured on real recordings, not reasoned
 about — where a number appears, it came from running the thing.
 
+## Resolution (2026-09-06)
+
+Read this section first; the rest of the document is the state of knowledge
+before the cause was found and is kept because its measurements and dead ends
+are still true.
+
+**The losses were not at music boundaries.** Of the four fragments below, the
+ones at 1246.6 s, 1621.6 s and 3696.2 s have no detected music within a minute.
+Each sat in a VAD speech region for which `asr.json` had *no words at all* —
+the words were never transcribed, so nothing in `merge.py` could have kept
+them. Seven such empty regions existed outside music, 11 s in total.
+
+**Cause: faster-whisper's clip packing.** `BatchedInferencePipeline` packs VAD
+regions into 30 s clips greedily by summed speech duration (`collect_chunks`)
+and cuts wherever the arithmetic lands. Simulating that packing on the real
+regions showed 5 of the 7 empty regions were exactly the *last* region of a
+clip, and 15 of 96 clips ended on a fragment under 2 s followed by under 1 s
+of pause — a sentence cut a second or two in. Whisper drops such a fragment at
+the end of its window. The two other empty regions were a 0.8 s region inside
+a clip and the region before one of the five.
+
+**Fix, part 1 — `asr.plan_clips`.** The ASR stage plans the clips and hands
+them to faster-whisper as `clip_timestamps`. A clip is a contiguous span of
+the original audio (pauses kept, so timings are honest), at most 30 s, cut at
+the widest pause among the regions that fit once the window is half full, and
+always at a pause over 3 s. On the 2026-08-27 service: 142 clips instead of 96, all seven
+empty regions now carry text, ASR 173 s instead of 142 s. Parameters and the
+numbers behind them are in `config.py` under `ASR_WINDOW_S`.
+
+**Fix, part 2 — merge at music edges.** Honest timings exposed two places
+where the old heuristics had been quietly deleting announcements at the edges
+of detected music, which the stretched timings had hidden:
+
+- `clip_to_speech` cut a segment at the end of its VAD run, but `vad.json` has
+  music subtracted, so a run ends where the music detector's 5 s window says
+  the music starts. "Gott ruft nach einer Jugend, und wir singen alle drei
+  Strophen" ran 3.3 s into a region and lost ten words. Merge now receives
+  the raw detection (`vad.detect`), so a segment is only ever cut at silence.
+- `_drop_inside_music` judged coverage against the region as detected. "Und
+  zum Schluss ein Dankgebet" was spoken 2.4 s before the detected end of a
+  145 s organ passage and was 100 % "inside music". The check now ignores one
+  hop (`_MUSIC_EDGE_MARGIN_S`, 5 s) at each edge.
+
+**Result on the 2026-08-27 service** (sequence diff against the previous transcript):
+unexplained 26 → 6, looping 276 → 274, inside music 99 → 99, hallucinations
+0, music regions 7, speakers 7. The remaining six words (at 2095 s) are a decoder collapse of two similar phrases at the
+start of a clip — the word timings show one blessing formula placed over where the other was said — and no boundary logic
+touches them. Officially reprocessed: 300 segments (293 speech, 7 music),
+6577 words, ASR segments 142 with the longest spanning 29.5 s.
+
+**The 2026-08-30 service** (`a6b0d9a9…`, ASR-only run replayed through merge, job
+directory untouched) stays at 0 unexplained, looping 692 → 693, and gains two
+things: the announcement *"Wir singen die Strophen 1 bis 4 und 6"* at 2118 s,
+which the README had listed as the one known loss, and `[Orgelspiel]` /
+`[Musik]` markers for the last eleven minutes of the recording — the old
+transcript had a single 658 s "segment" reading *"Bitte nun die
+Reihenkollekte."* stretched over that organ passage, which swallowed both.
+
+**What this retires.** The "word timings inside a merged segment are
+unreliable" trap only applies on the fallback paths now (no regions, a
+faster-whisper without `clip_timestamps`, or the sequential model);
+`tighten_bounds` and `split_across_speech` stay for those. The proportional
+redistribution never runs on planned clips because a clip never contains a
+gap over 3 s.
+
 ## The problem
 
 A few words are cut where speech meets music. Most visible on
@@ -131,7 +196,8 @@ can be inspected without re-running anything on the GPU:
 
 ## Conventions
 
-- Tests live in `tests/test_logic.py`; 127 pass today. Run them with
+- Tests live in `tests/test_logic.py` and `tests/test_exports.py`; 161 pass
+  today. Run them with
   `.\scripts\verify.ps1`, which also checks GPU passthrough and the containers.
 - German for anything a user reads, English for identifiers and comments.
 - Rebuild after worker changes: `docker compose build worker` then

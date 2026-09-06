@@ -19,7 +19,8 @@ import numpy as np
 import torch
 
 from .. import hallucinations
-from ..config import (ASR_BATCH_SIZE, ASR_COMPUTE_TYPE, ASR_MODEL, INITIAL_PROMPT,
+from ..config import (ASR_BATCH_SIZE, ASR_CLIP_MAX_GAP_S, ASR_CLIP_MIN_FILL,
+                      ASR_COMPUTE_TYPE, ASR_MODEL, ASR_WINDOW_S, INITIAL_PROMPT,
                       LANGUAGE)
 from . import merge as merge_stage
 from . import vad as vad_stage
@@ -47,8 +48,13 @@ if INITIAL_PROMPT:
 
 
 def run(audio: np.ndarray, duration: float, device: torch.device,
-        on_progress: Callable[[float], None] | None = None) -> dict[str, Any]:
+        on_progress: Callable[[float], None] | None = None,
+        speech_regions: list[dict[str, float]] | None = None) -> dict[str, Any]:
     from faster_whisper import WhisperModel
+
+    clips = plan_clips(speech_regions) if speech_regions else []
+    if clips:
+        log.info("asr: %d speech regions planned into %d clips", len(speech_regions), len(clips))
 
     # int8_float16 needs a GPU; on the CPU fallback path plain int8 is the only
     # sensible choice.
@@ -57,7 +63,7 @@ def run(audio: np.ndarray, duration: float, device: torch.device,
     model = WhisperModel(ASR_MODEL, device="cuda" if on_gpu else "cpu",
                          compute_type=compute_type)
     try:
-        segments_iter, info = _transcribe(model, audio)
+        segments_iter, info = _transcribe(model, audio, clips)
         raw: list[dict[str, Any]] = []
         for segment in segments_iter:
             raw.append({
@@ -83,10 +89,12 @@ def run(audio: np.ndarray, duration: float, device: torch.device,
 
     kept, dropped = hallucinations.clean(raw, prompt=INITIAL_PROMPT)
 
-    # The batched pipeline merges VAD chunks across long musical gaps, so a
-    # segment's timestamps can span thirteen minutes while its text is a single
-    # sentence spoken at the very start. Correct that here, before anything
-    # downstream trusts a timespan:
+    # With planned clips a segment is a contiguous span of at most 30 s and its
+    # timings are honest. On the fallback paths (no regions, an older
+    # faster-whisper, the sequential model) the batched pipeline packs VAD
+    # chunks across long musical gaps, so a segment's timestamps can span
+    # thirteen minutes while its text is a single sentence spoken at the very
+    # start. Correct that here, before anything downstream trusts a timespan:
     #   - alignment is quadratic in clip length, so a 13-minute "segment" takes
     #     that stage from 40 seconds to effectively forever;
     #   - the music-overlap check in merge would see a span covering a whole
@@ -124,7 +132,56 @@ def _supported(function, options: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in options.items() if k in accepted}
 
 
-def _transcribe(model, audio: np.ndarray):
+def plan_clips(regions: list[dict[str, float]], *, window: float = ASR_WINDOW_S,
+               max_gap: float = ASR_CLIP_MAX_GAP_S,
+               min_fill: float = ASR_CLIP_MIN_FILL) -> list[dict[str, float]]:
+    """Group speech regions into the clips Whisper is handed.
+
+    Left to itself, faster-whisper's batched pipeline packs regions into a clip
+    by summed speech duration and starts a new one when the next region no
+    longer fits. That cuts wherever the arithmetic lands, which is regularly a
+    second or two into a sentence - and Whisper reliably drops a short fragment
+    hanging off the end of its window. On the 2026-08-27 service every fragment
+    that went missing outside music was the last region of a packed clip.
+
+    Here a clip is a contiguous span of the original audio, so the pauses in it
+    are real and the word timings come out honest, and it ends at the widest
+    pause among the regions that fit once the window is reasonably full. A
+    pause longer than `max_gap` always ends a clip, which keeps long silences
+    out of the window. Each region lands in exactly one clip; a lone region
+    longer than the window is passed through and truncated by Whisper, which
+    the VAD's own maximum speech duration prevents in practice.
+    """
+    clips: list[dict[str, float]] = []
+    index, count = 0, len(regions)
+    while index < count:
+        start = regions[index]["start"]
+        last = index
+        natural_end = True
+        while last + 1 < count:
+            following = regions[last + 1]
+            if following["end"] - start > window:
+                natural_end = False
+                break
+            if following["start"] - regions[last]["end"] > max_gap:
+                break
+            last += 1
+
+        cut = last
+        if not natural_end:
+            candidates = range(index, last + 1)
+            filled = [k for k in candidates
+                      if regions[k]["end"] - start >= min_fill * window]
+            pause = lambda k: regions[k + 1]["start"] - regions[k]["end"]  # noqa: E731
+            # Later on a tie, so the clip is as full as the pauses allow.
+            cut = max(filled or list(candidates), key=lambda k: (pause(k), k))
+
+        clips.append({"start": start, "end": regions[cut]["end"]})
+        index = cut + 1
+    return clips
+
+
+def _transcribe(model, audio: np.ndarray, clips: list[dict[str, float]]):
     """Batched inference, falling back to sequential if the batched path fails.
 
     Batching is worth roughly 3x here, but it is also the newer code path; the
@@ -138,7 +195,13 @@ def _transcribe(model, audio: np.ndarray):
 
     try:
         batched = BatchedInferencePipeline(model=model)
-        options = _supported(batched.transcribe, {**base, "batch_size": ASR_BATCH_SIZE})
+        # Planned clips replace the pipeline's own VAD packing; without them
+        # (no regions, or an older faster-whisper without clip_timestamps) it
+        # falls back to packing for itself.
+        planned = {**DECODE_OPTIONS, "clip_timestamps": clips} if clips else base
+        options = _supported(batched.transcribe, {**planned, "batch_size": ASR_BATCH_SIZE})
+        if clips and "clip_timestamps" not in options:
+            options = _supported(batched.transcribe, {**base, "batch_size": ASR_BATCH_SIZE})
         return batched.transcribe(audio, **options)
     except Exception:
         log.warning("batched inference unavailable, falling back to sequential",

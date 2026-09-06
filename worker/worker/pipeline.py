@@ -107,14 +107,18 @@ def process(job_id: str) -> dict[str, Any]:
 
         # -- 4: VAD --------------------------------------------------------
         reporter.stage("vad")
-        speech_regions = vad.run(audio, music_regions)
+        # One Silero pass: the raw regions cut the ASR clips, the music-free
+        # ones anchor diarization and merge.
+        detected = vad.detect(audio)
+        speech_regions = vad.run(audio, music_regions, detected=detected)
         write_json(directory / "vad.json", speech_regions)
         if not speech_regions:
             raise RuntimeError("In der Aufnahme wurde keine Sprache gefunden.")
 
         # -- 5: ASR --------------------------------------------------------
         reporter.stage("asr")
-        transcription = asr.run(audio, duration, compute_device, reporter.progress)
+        transcription = asr.run(audio, duration, compute_device, reporter.progress,
+                                speech_regions=detected)
         write_json(directory / "asr.json", transcription)
         segments = transcription["segments"]
 
@@ -141,7 +145,9 @@ def process(job_id: str) -> dict[str, Any]:
             asr_segments=segments,
             turns=turns,
             music_regions=music_regions,
-            speech_regions=speech_regions,
+            # The raw detection, not vad.json: see merge.run on why a segment
+            # must never be clipped at a music edge.
+            speech_regions=detected,
         )
         write_json(directory / "transcript.json", document)
 

@@ -42,12 +42,27 @@ def vad_options():
     return VadOptions(**{k: v for k, v in wanted.items() if k in available})
 
 
-def run(audio: np.ndarray, music_regions: list[dict[str, Any]]) -> list[dict[str, float]]:
+def detect(audio: np.ndarray) -> list[dict[str, float]]:
+    """Raw Silero speech regions in seconds, music included.
+
+    This is what the ASR stage cuts its clips from: sung passages stay in so
+    that music filtering happens in one place, merge, on tightened bounds.
+    """
     from faster_whisper.vad import get_speech_timestamps
 
     chunks = get_speech_timestamps(audio, vad_options())
-    speech = [{"start": c["start"] / SAMPLE_RATE, "end": c["end"] / SAMPLE_RATE}
-              for c in chunks]
+    return [{"start": c["start"] / SAMPLE_RATE, "end": c["end"] / SAMPLE_RATE}
+            for c in chunks]
+
+
+def run(audio: np.ndarray, music_regions: list[dict[str, Any]],
+        detected: list[dict[str, float]] | None = None) -> list[dict[str, float]]:
+    """Speech regions with music cut out - the anchor for diarization and merge.
+
+    `detected` lets the pipeline run Silero once and share the result with the
+    ASR stage.
+    """
+    speech = detected if detected is not None else detect(audio)
     speech = subtract(speech, music_regions)
     total = sum(s["end"] - s["start"] for s in speech)
     log.info("vad: %d speech regions, %.1f min of speech", len(speech), total / 60)

@@ -468,7 +468,7 @@ windows tagged as music in one, **26% in the other** (41.4 minutes of speech in
 
 GPU passthrough and all nine stages; resumable upload including stale-PATCH
 retry and format rejection; forced alignment; all five exports; editing, speaker
-renaming, SSE progress; the legacy import converging on re-run; 66 unit tests
+renaming, SSE progress; the legacy import converging on re-run; 161 unit tests
 (`.\scriptserify.ps1`).
 
 **Timing, measured:** ~13 minutes for a 58-minute service, ~9 minutes when the
@@ -476,49 +476,60 @@ summary is skipped. Peak VRAM stayed comfortable throughout (7.4 GB free of
 8.6 GB) — including diarization of a 72-minute recording, which was the memory
 risk worth watching.
 
-### The one place real speech is still lost
+### Announcements at the edge of music
 
-Short spoken announcements immediately beside music get absorbed into the music
-region — *"Wir singen die Strophen 1 bis 4 und 6."* sits inside a `[Musik]` span
-and does not survive. This is a resolution limit: a three-second announcement
-inside a ten-second classification window does not change that window's verdict.
-Halving `MUSIC_HOP_S` (5 → 2.5) doubles boundary resolution for roughly a minute
-more per job, if that trade is worth it to you.
+Short spoken announcements immediately beside music used to be absorbed into
+the music region — *"Wir singen die Strophen 1 bis 4 und 6."* sat inside a
+`[Musik]` span and did not survive. A three-second announcement inside a
+ten-second classification window does not change that window's verdict, so the
+region's edge lands on it. The inside-music check now ignores one hop (5 s) at
+each edge of a region, and that announcement is transcribed at 2118 s on the
+2026-08-30 service, with the music marker trimmed to start after it. An
+announcement deeper than a hop inside a region would still be lost;
+halving `MUSIC_HOP_S` (5 → 2.5) is the lever for that, at roughly a minute more
+per job.
 
-## Open issue: words clipped at music/speech boundaries
+## Resolved: words dropped at the ends of Whisper's windows
 
-Full write-up, including what has already been tried and why each attempt failed:
+Full write-up, including the history of attempts and the measurement:
 [`docs/handoff-music-speech-boundaries.md`](docs/handoff-music-speech-boundaries.md).
 
-A few words are lost where speech meets music. Most visible on job
-`7cfcf258151a411da7edd6d852fd19dc` (a 73-minute service from 2026-08-27), where
-it happens at essentially every boundary.
+This was filed as words lost "where speech meets music", and it was not that.
+On job `7cfcf258151a411da7edd6d852fd19dc` (the 73-minute service from
+2026-08-27) three of the four lost fragments had no music within a minute of
+them. What they had in
+common was that each was the **last VAD region of a 30-second clip**:
+faster-whisper's batched pipeline packs speech regions into clips greedily by
+summed duration, so a clip regularly ends a second or two into a sentence, and
+Whisper drops a short fragment hanging off the end of its window. Five of the
+seven speech regions with no text at all were in that position.
 
-Measured against that recording's previous transcript, after the redistribution
-fix: 26 words, 0.4% of the text, in four short fragments cut mid-phrase, each
-the head or tail of a sentence.
+The ASR stage now plans the clips itself (`plan_clips` in
+`worker/worker/stages/asr.py`): a clip is a contiguous span of the recording,
+never longer than 30 s, ending at the widest pause among the regions that fit
+once the window is half full, and always at a pause over 3 s. Contiguous clips
+also mean the word timings are honest, which retired the old "a segment can
+claim to span thirteen minutes" trap, and that in turn exposed two places the
+merge stage had been deleting real announcements at the *edges* of detected
+music: segments are now clipped only at silence the VAD heard, never at a
+music edge, and the inside-music check ignores the first and last 5 s of a
+region (one classification hop).
 
-Reproduce the measurement by diffing a reprocessed transcript against the
-recording's pre-pipeline text, classifying each old-only run as looping, inside
-music, or unexplained — the unexplained bucket is this issue.
+Measured against the recording's previous transcript, old-only runs classified
+as looping / inside music / unexplained:
 
-Four places decide a boundary, and the fault is likely shared between them:
+| | before | after |
+|---|---|---|
+| unexplained words | 26 | 6 |
+| looping (correctly absent) | 276 | 274 |
+| inside music (absent by design) | 99 | 99 |
+| hallucinations dropped | 0 | 0 |
+| music regions | 7 | 7 |
+| speakers | 7 | 7 |
+| ASR stage | 142 s, 96 clips | 173 s, 142 clips |
 
-- `VAD_SPEECH_PAD_MS` (200 ms) in `worker/worker/config.py` pads each speech
-  region. A word starting just before the pad is outside the region.
-- `clip_to_speech` in `worker/worker/stages/merge.py` truncates a segment at the
-  end of the speech run it starts in.
-- `split_across_speech` distributes a merged segment's words across the runs it
-  spans **in proportion to each run's duration**. That is a heuristic, and it is
-  weakest exactly at the joins — the most likely culprit for mid-phrase cuts.
-- `_music_without_speech` clips music regions off transcribed speech, which
-  moves the visible boundary but not the word list.
-
-`data/jobs/<id>/vad.json`, `music.json` and `asr.json` are all kept, so the
-boundary can be inspected without re-running the GPU stages. Note that
-`asr.json` holds the bounds *after* tightening, and the word timings inside a
-merged segment are themselves unreliable — that is what made the naive fixes
-fail.
+The six words left (at 2095 s) are a decoder merge of two similar phrases at
+the start of a clip, not a boundary effect.
 
 ## Known limits
 

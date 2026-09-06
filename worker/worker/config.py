@@ -33,6 +33,25 @@ LANGUAGE = "de"
 # filter in hallucinations.py will catch verbatim regurgitation either way.
 INITIAL_PROMPT = os.environ.get("ASR_INITIAL_PROMPT", "").strip() or None
 
+# How speech is cut into the clips Whisper sees. The ASR stage plans these
+# itself instead of letting faster-whisper pack VAD regions greedily, because
+# greedy packing regularly ends a clip on a short mid-sentence fragment and
+# Whisper then drops that fragment. Measured on the 2026-08-27 service: of the 7
+# speech regions that came back with no text at all, 5 were exactly the last
+# region of a packed clip, and 15 of 96 clips ended on a fragment under 2 s
+# followed by under 1 s of pause.
+ASR_WINDOW_S = 30.0
+# A pause longer than this always ends a clip. Ordinary speaking pauses have a
+# 90th percentile of 1.5-2.3 s across three services and reach 2.9 s in a
+# sermon; a cut at a pause costs nothing, both sides are still transcribed, so
+# this only has to keep long silences out of the window.
+ASR_CLIP_MAX_GAP_S = 3.0
+# Once the window is this full, cut at the widest pause among what fits rather
+# than at the last region that fits. On that service 0.5 gives 142 clips (96 when
+# packed greedily) with 4 short-tail cuts instead of 15; 0.7 saves four clips
+# and costs two short tails.
+ASR_CLIP_MIN_FILL = 0.5
+
 # --- Diarization ------------------------------------------------------------
 DIARIZATION_MODEL = os.environ.get(
     "DIARIZATION_MODEL", "pyannote/speaker-diarization-community-1"
