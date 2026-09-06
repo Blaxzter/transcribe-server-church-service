@@ -437,6 +437,9 @@ more per job, if that trade is worth it to you.
 
 ## Open issue: words clipped at music/speech boundaries
 
+Full write-up, including what has already been tried and why each attempt failed:
+[`docs/handoff-music-speech-boundaries.md`](docs/handoff-music-speech-boundaries.md).
+
 A few words are lost where speech meets music. Most visible on job
 `7cfcf258151a411da7edd6d852fd19dc` (2026-08-27 R. Gerhardt), where it happens at
 essentially every boundary.
