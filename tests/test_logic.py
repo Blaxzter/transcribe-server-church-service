@@ -735,3 +735,38 @@ def test_normalize_refuses_to_overwrite_its_own_source(tmp_path) -> None:
     proxy.write_bytes(b"not really opus")
     with _pytest.raises(normalize.AudioError, match="Refusing to overwrite"):
         normalize.run(proxy, tmp_path, make_opus=True)
+
+
+# ---------------------------------------------------------------------------
+# Filter calibration against 121 real legacy transcripts
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text", [
+    "Glocken", "Nationalhymne", "Orgel", "Choral", "Chor", "Instrumental",
+    "  musik  ", "[Gesang]",
+])
+def test_bare_audio_labels_are_dropped(text: str) -> None:
+    """Whisper labelling non-speech instead of transcribing it. These appeared
+    as whole segments dozens of times each in the old system's output."""
+    assert hallucinations.is_denylisted(text)
+
+
+@pytest.mark.parametrize("text", [
+    # All of these recur constantly in the archive and are genuine liturgy.
+    "Gott zum Gruß.",
+    "In Christo Jesu. Amen.",
+    "Lasset uns beten.",
+    "Unser täglich Brot gib uns heute und vergib uns unsere Schuld,",
+    "Denn dein ist das Reich, die Kraft und die Herrlichkeit.",
+    "Im Namen Gottes des Vaters, Gottes des Sohnes und Gottes des Heiligen Geistes.",
+    "Der Herr lasse leuchten sein Angesicht über euch und sei euch gnädig.",
+    "Ich wünsche euch einen schönen Gottesdienst.",
+    # Announcements that merely contain a label word.
+    "Choral 238",
+    "Lied Nr. 34",
+    "Wir singen nun die Nationalhymne.",
+    "Dann läuten die Glocken zum Gebet.",
+])
+def test_recurring_liturgy_is_never_dropped(text: str) -> None:
+    """A filter that eats real liturgy is far worse than one that keeps a label.
+    Every phrase here appeared 30+ times across the 121 imported transcripts."""
+    assert not hallucinations.is_denylisted(text)

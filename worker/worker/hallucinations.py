@@ -31,7 +31,13 @@ _DENYLIST = [
     r"bis zum n(ä|ae)chsten mal",
     r"abonniere?[nt]?\s+(den\s+)?kanal",
     r"mehr infos? (auf|unter)\s+www",
-    r"^\W*(musik|music|applaus|applause|gesang)\W*$",
+    # Whisper labelling non-speech audio rather than transcribing it. Mined from
+    # 121 real transcripts of the previous system: "Glocken" appeared 71 times
+    # and "Nationalhymne" 111 times as complete segments over bells and music.
+    # Anchored to the whole segment, so "Wir singen die Nationalhymne" and
+    # announcements like "Choral 238" are untouched.
+    r"^\W*(musik|music|applaus|applause|gesang|glocken|nationalhymne|"
+    r"orgel|orgelspiel|choral|chor|instrumental)\W*$",
     r"^\W*\[?\s*(musik|music)\s*\]?\W*$",
     r"^\W*(untertitel|subtitles?)\W*$",
     r"^\W*(vielen dank|danke)\W*$",
