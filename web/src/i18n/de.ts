@@ -148,8 +148,20 @@ export const de = {
   detail: {
     tabSummary: "Zusammenfassung",
     tabSpeakers: "Sprecher",
+    tabHymns: "Lieder",
     tabExport: "Export",
     tabDetails: "Details",
+  },
+
+  hymns: {
+    title: "Lieder",
+    empty: "Für diese Aufnahme wurden keine Liednummern gefunden.",
+    fromTitle: "aus dem Dateinamen",
+    noneSpoken: "Keine Nummer wurde im Gottesdienst angesagt — alle stammen aus dem Dateinamen.",
+    hint: (spoken: number, total: number) =>
+      spoken === total
+        ? "Alle Nummern wurden im Gottesdienst angesagt — zum Anhören anklicken."
+        : `${spoken} von ${total} wurden angesagt; die übrigen stammen aus dem Dateinamen.`,
   },
 
   player: {

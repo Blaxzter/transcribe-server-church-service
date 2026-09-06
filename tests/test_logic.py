@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "worker"))
 sys.path.insert(0, str(ROOT / "api"))
 
+from app import hymns  # noqa: E402
 from worker import hallucinations  # noqa: E402
 from worker.stages import merge, vad  # noqa: E402
 
@@ -912,3 +913,89 @@ def test_unalignable_words_are_kept_not_dropped() -> None:
     assert words[1]["end"] <= digit["start"] <= words[3]["start"]
     assert " ".join(w["word"] for w in words) == "Choral Nummer 122 singen"
     assert _np is not None and align_stage is not None
+
+
+# ---------------------------------------------------------------------------
+# Hymn extraction
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text,expected", [
+    ("Wir singen den Choral 71.", [71]),
+    ("Und wir singen das Lied Nummer 27, Brücken bauen", [27]),
+    ("im Johannischen Gesangbuch Nr. 177. Macht hoch die", [177]),
+    ("Wir singen das Lied 128. Alle Strophen", [128]),
+    ("Nummer 144, Strophe 1 bis 4.", [144]),
+    ("singen wir den Choral 71. Danach den Choral 410.", [71, 410]),
+])
+def test_hymn_numbers_are_found(text: str, expected: list[int]) -> None:
+    """Phrasings taken verbatim from the archive."""
+    assert hymns.find_in_text(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    # Verse numbers sit right next to hymn announcements and must never be
+    # mistaken for them, or every service gains a hymn "1".
+    "Großer Gott, wir loben dich. Die Strophen 1 bis 4 und 6.",
+    "Wir singen alle vier Strophen.",
+    "Strophe 1 bis 4.",
+    # No cue word at all.
+    "Im Jahr 1917 geschah es.",
+    "Wir waren 250 Menschen.",
+])
+def test_verse_and_stray_numbers_are_not_hymns(text: str) -> None:
+    assert hymns.find_in_text(text) == []
+
+
+def test_number_range_is_enforced() -> None:
+    assert hymns.find_in_text("Choral 0") == []
+    assert hymns.find_in_text("Lied Nummer 1000") == []
+    assert hymns.find_in_text("Choral 999") == [999]
+
+
+def test_title_numbers_are_parsed_without_the_date() -> None:
+    """The archive encodes hymns as a dash-joined group; the ISO date in front
+    of it must not be mistaken for one."""
+    assert hymns.numbers_from_title("2026-08-30 C.Schermutzki 116-122-245") == [116, 122, 245]
+    assert hymns.numbers_from_title("2026-08-27 R. Gerhardt 284-117") == [284, 117]
+    assert hymns.numbers_from_title("audio") == []
+    assert hymns.numbers_from_title("2026-08-30 Ohne Nummern") == []
+
+
+def test_extract_keeps_timestamps_and_deduplicates() -> None:
+    doc = {"segments": [
+        {"id": "s0", "type": "music", "start": 0.0, "end": 60.0, "text": "[Orgelspiel]"},
+        {"id": "s1", "type": "speech", "start": 61.0, "end": 66.0,
+         "text": "Wir singen den Choral 71."},
+        {"id": "s2", "type": "speech", "start": 300.0, "end": 305.0,
+         "text": "Noch einmal Choral 71, alle Strophen."},
+    ]}
+    got = hymns.extract(doc)
+    assert [h["number"] for h in got] == [71]
+    assert got[0]["at"] == 61.0          # first mention wins
+    assert got[0]["segment_id"] == "s1"
+    assert got[0]["mentions"] == 2
+
+
+def test_collect_merges_title_and_transcript() -> None:
+    """72% of hymn numbers are never spoken, so the filename supplies coverage
+    and the transcript supplies the timestamp."""
+    doc = {"segments": [{"id": "s1", "type": "speech", "start": 61.0, "end": 66.0,
+                         "text": "Wir singen den Choral 122."}]}
+    got = hymns.collect(doc, "2026-08-30 C.Schermutzki 116-122-245")
+    by_number = {h["number"]: h for h in got}
+    assert set(by_number) == {116, 122, 245}
+    assert by_number[122]["source"] == "both" and by_number[122]["at"] == 61.0
+    assert by_number[116]["source"] == "title" and by_number[116]["at"] is None
+    # Timestamped entries come first so the panel reads in playback order.
+    assert got[0]["number"] == 122
+
+
+def test_hymn_context_is_centred_on_the_number() -> None:
+    """A segment can run for half a minute before the number is announced, so a
+    snippet taken from its start would cut off the thing it exists to show."""
+    doc = {"segments": [{"id": "s1", "type": "speech", "start": 10.0, "end": 40.0,
+                         "text": ("Ihr Lieben, wer es vermag, moechte sich nun von seinem "
+                                  "Platz erheben, damit wir gemeinsam den Choral Nummer 122 "
+                                  "singen, alle Strophen.")}]}
+    context = hymns.extract(doc)[0]["context"]
+    assert "122" in context
+    assert "Choral" in context

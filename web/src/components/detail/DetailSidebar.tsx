@@ -1,35 +1,41 @@
-import { Download, FileText, Info, Users, type LucideIcon } from "lucide-react";
+import { Download, FileText, Info, Music4, Users, type LucideIcon } from "lucide-react";
 import type { Job, Transcript } from "@/lib/api";
 import { de } from "@/i18n/de";
 import { cn } from "@/lib/utils";
 import { DetailsPanel } from "@/components/detail/DetailsPanel";
 import { ExportPanel } from "@/components/detail/ExportPanel";
+import { HymnsPanel } from "@/components/detail/HymnsPanel";
 import { SpeakerLegend } from "@/components/detail/SpeakerLegend";
 import { SummaryPanel } from "@/components/detail/SummaryPanel";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export type DetailTab = "summary" | "speakers" | "export" | "details";
+export type DetailTab = "summary" | "speakers" | "hymns" | "export" | "details";
 
 const TABS: Record<DetailTab, { label: string; icon: LucideIcon }> = {
   summary: { label: de.detail.tabSummary, icon: FileText },
   speakers: { label: de.detail.tabSpeakers, icon: Users },
+  hymns: { label: de.detail.tabHymns, icon: Music4 },
   export: { label: de.detail.tabExport, icon: Download },
   details: { label: de.detail.tabDetails, icon: Info },
 };
 
 function availableTabs(doc: Transcript | null): DetailTab[] {
-  const hasSpeakers = doc ? Object.keys(doc.speakers).length > 0 : false;
-  return hasSpeakers
-    ? ["summary", "speakers", "export", "details"]
-    : ["summary", "export", "details"];
+  const tabs: DetailTab[] = ["summary"];
+  if (doc && Object.keys(doc.speakers).length > 0) tabs.push("speakers");
+  // Legacy imports have no speakers and no summary but usually do have hymns,
+  // so this is often the only tab with anything in it.
+  if (doc?.hymns?.length) tabs.push("hymns");
+  tabs.push("export", "details");
+  return tabs;
 }
 
 /** Opens on whatever this recording actually has — legacy imports have neither. */
 export function defaultDetailTab(doc: Transcript | null): DetailTab {
   if (!doc) return "summary";
   if (doc.summary) return "summary";
-  return Object.keys(doc.speakers).length > 0 ? "speakers" : "export";
+  if (Object.keys(doc.speakers).length > 0) return "speakers";
+  return doc.hymns?.length ? "hymns" : "export";
 }
 
 interface DetailSidebarProps {
@@ -38,6 +44,7 @@ interface DetailSidebarProps {
   legacy: boolean;
   value: DetailTab;
   onValueChange: (tab: DetailTab) => void;
+  onSeek?: (seconds: number) => void;
   className?: string;
 }
 
@@ -53,6 +60,7 @@ export function DetailSidebar({
   legacy,
   value,
   onValueChange,
+  onSeek,
   className,
 }: DetailSidebarProps) {
   const tabs = availableTabs(doc);
@@ -95,6 +103,9 @@ export function DetailSidebar({
         </TabsContent>
         <TabsContent value="speakers" className="min-h-0 flex-1 overflow-y-auto p-5">
           <SpeakerLegend doc={doc} />
+        </TabsContent>
+        <TabsContent value="hymns" className="min-h-0 flex-1 overflow-y-auto p-5">
+          <HymnsPanel hymns={doc?.hymns ?? []} onSeek={onSeek} />
         </TabsContent>
         <TabsContent value="export" className="min-h-0 flex-1 overflow-y-auto p-5">
           <ExportPanel jobId={job.id} hasOriginal={job.has_original} />

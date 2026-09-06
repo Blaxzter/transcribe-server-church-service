@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, hymns
 from .config import job_dir
 
 log = logging.getLogger(__name__)
@@ -65,9 +65,20 @@ class TranscriptPatch(BaseModel):
     speakers: dict[str, SpeakerEdit] = Field(default_factory=dict)
 
 
+def _with_hymns(job_id: str, doc: dict[str, Any]) -> dict[str, Any]:
+    """Attach hymn references to a response without persisting them.
+
+    Derived rather than stored: it costs about a millisecond, it means all 122
+    existing recordings gain the feature with no backfill or reprocessing, and
+    editing a transcript cannot leave a stale list behind.
+    """
+    row = db.query_one("SELECT title FROM jobs WHERE id = ?", (job_id,))
+    return {**doc, "hymns": hymns.collect(doc, row["title"] if row else None)}
+
+
 @router.get("/{job_id}/transcript")
 async def get_transcript(job_id: str) -> dict[str, Any]:
-    return load(job_id)
+    return _with_hymns(job_id, load(job_id))
 
 
 @router.patch("/{job_id}/transcript")
@@ -97,7 +108,7 @@ async def patch_transcript(job_id: str, payload: TranscriptPatch) -> dict[str, A
             entry["label"] = edit.label
 
     save(job_id, doc)
-    return doc
+    return _with_hymns(job_id, doc)
 
 
 @router.get("/{job_id}/summary")

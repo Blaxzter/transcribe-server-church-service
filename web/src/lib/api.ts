@@ -55,6 +55,16 @@ export interface Speaker {
   auto?: boolean;
 }
 
+export interface Hymn {
+  number: number;
+  /** Seconds into the recording, or null when only the filename knew about it. */
+  at: number | null;
+  segment_id: string | null;
+  context: string | null;
+  mentions: number;
+  source: "transcript" | "title" | "both";
+}
+
 export interface Transcript {
   version: number;
   job_id: string;
@@ -66,6 +76,7 @@ export interface Transcript {
   outline?: string[] | null;
   /** "legacy-import" means no speakers, music markers or summary. */
   source?: string | null;
+  hymns?: Hymn[];
   updated_at?: string;
 }
 

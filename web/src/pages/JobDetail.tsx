@@ -275,6 +275,7 @@ export function JobDetailPage() {
                 legacy={legacy}
                 value={tab}
                 onValueChange={setTab}
+                onSeek={seek}
                 className={SIDEBAR_PANE}
               />
             ) : (
