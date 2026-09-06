@@ -770,3 +770,87 @@ def test_recurring_liturgy_is_never_dropped(text: str) -> None:
     """A filter that eats real liturgy is far worse than one that keeps a label.
     Every phrase here appeared 30+ times across the 121 imported transcripts."""
     assert not hallucinations.is_denylisted(text)
+
+
+# ---------------------------------------------------------------------------
+# Speech veto on music windows
+# ---------------------------------------------------------------------------
+def test_speech_veto_threshold_sits_above_singing() -> None:
+    """Measured on 43 windows of confirmed congregational singing, the AudioSet
+    speech score ran 0.002-0.037. The veto must stay far above that or it would
+    turn every hymn back into transcribed lyrics."""
+    from worker.config import MUSIC_SPEECH_VETO, MUSIC_THRESHOLD
+
+    assert MUSIC_SPEECH_VETO >= 0.5
+    assert MUSIC_THRESHOLD < MUSIC_SPEECH_VETO
+
+
+def test_loud_music_does_not_beat_confident_speech() -> None:
+    """The real case this fixes: music 0.840 against speech 0.719 at the trailing
+    edge of a hymn, where an announcement was being swallowed."""
+    from worker.config import MUSIC_OVER_SPEECH, MUSIC_SPEECH_VETO, MUSIC_THRESHOLD
+
+    def is_music(music: float, speech: float) -> bool:
+        return (music >= MUSIC_THRESHOLD
+                and music >= speech * MUSIC_OVER_SPEECH
+                and speech < MUSIC_SPEECH_VETO)
+
+    assert not is_music(0.840, 0.719)      # the announcement, now preserved
+    assert is_music(0.833, 0.595)          # just below the veto: still music
+    assert is_music(0.682, 0.009)          # ordinary congregational singing
+    assert is_music(0.907, 0.006)          # organ
+    assert not is_music(0.024, 0.859)      # plain speech
+    assert not is_music(0.193, 0.100)      # too quiet to call music
+
+
+# ---------------------------------------------------------------------------
+# Clipping segments to the speech VAD found
+# ---------------------------------------------------------------------------
+def test_monster_segment_is_clipped_to_its_speech_region() -> None:
+    """The real case: VAD isolated an announcement at 2107.5-2117.5, but the
+    batched ASR emitted it as spanning 2107.5-2436.3 - through five minutes of
+    hymn - so the music-overlap check discarded a genuine announcement."""
+    speech = [{"start": 2107.5, "end": 2117.5}]
+    segment = {"start": 2107.5, "end": 2436.3,
+               "text": "es vermag, moechte sich nun von seinem Platz erheben",
+               "words": _words([("es", 2107.6, 2107.9), ("vermag", 2108.0, 2108.6),
+                                ("erheben", 2116.0, 2117.2)])}
+    clipped = merge.clip_to_speech(segment, speech)
+    assert clipped["end"] == 2117.5
+    assert clipped["clipped"] is True
+    assert clipped["text"] == segment["text"]
+
+    # And now it survives the music check instead of being swallowed.
+    music = [{"start": 2117.5, "end": 2417.5, "marker": "[Musik]"}]
+    kept, dropped = merge._drop_inside_music([clipped], music)
+    assert kept and not dropped
+
+
+def test_clipping_bridges_ordinary_speaking_pauses() -> None:
+    """Sermon pauses must not truncate an utterance. Measured across three real
+    services, speaking pauses reach ~2.9 s; the gaps that must be cut are 20 s+."""
+    speech = [{"start": 10.0, "end": 14.0}, {"start": 16.9, "end": 25.0}]
+    segment = {"start": 10.0, "end": 25.0, "text": "x", "words": None}
+    assert merge.clip_to_speech(segment, speech)["end"] == 25.0
+
+
+def test_clipping_still_cuts_at_a_musical_gap() -> None:
+    speech = [{"start": 10.0, "end": 14.0}, {"start": 34.0, "end": 60.0}]
+    segment = {"start": 10.0, "end": 60.0, "text": "x", "words": None}
+    assert merge.clip_to_speech(segment, speech)["end"] == 14.0
+
+
+def test_clipping_leaves_ordinary_segments_alone() -> None:
+    speech = [{"start": 0.0, "end": 60.0}]
+    segment = {"start": 5.0, "end": 12.0, "text": "x", "words": None}
+    assert merge.clip_to_speech(segment, speech) == segment
+    # No VAD data at all must not mangle anything either.
+    assert merge.clip_to_speech(segment, []) == segment
+
+
+def test_clipping_drops_words_past_the_cut() -> None:
+    speech = [{"start": 0.0, "end": 10.0}]
+    segment = {"start": 0.0, "end": 100.0, "text": "a b",
+               "words": _words([("a", 1.0, 2.0), ("b", 50.0, 51.0)])}
+    clipped = merge.clip_to_speech(segment, speech)
+    assert [w["word"] for w in clipped["words"]] == ["a"]

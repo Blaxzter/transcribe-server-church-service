@@ -17,7 +17,8 @@ import torch
 
 from ..config import (MUSIC_BATCH, MUSIC_HOP_S, MUSIC_MARKERS, MUSIC_MERGE_GAP_S,
                       MUSIC_MIN_DURATION_S, MUSIC_MODEL, MUSIC_OVER_SPEECH,
-                      MUSIC_THRESHOLD, MUSIC_WINDOW_S, SAMPLE_RATE, SPEECH_LABELS)
+                      MUSIC_SPEECH_VETO, MUSIC_THRESHOLD, MUSIC_WINDOW_S,
+                      SAMPLE_RATE, SPEECH_LABELS)
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,10 @@ def run(audio: np.ndarray, device: torch.device,
                             best_marker
                             and best_score >= MUSIC_THRESHOLD
                             and best_score >= speech * MUSIC_OVER_SPEECH
+                            # Confident speech always wins, however loud the
+                            # music: this is the fade-out of a hymn with someone
+                            # already talking over it.
+                            and speech < MUSIC_SPEECH_VETO
                         ),
                     })
 

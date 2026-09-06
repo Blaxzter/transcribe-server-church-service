@@ -36,6 +36,18 @@ _MIN_MUSIC_AFTER_TRIM_S = 2.5
 # Only meaningful once bounds have been tightened to the real words.
 _MUSIC_OVERLAP_DROP = 0.5
 
+# How long a silence a single utterance may span before a segment is cut at it.
+# Measured across three real services: ordinary speaking pauses have a 90th
+# percentile of 1.5-2.3 s and the longest that wrongly truncated a sermon was
+# 2.9 s, while the gaps that must be cut - speech either side of a musical
+# passage - are 20 s and up. 8 s sits in the quiet part of that distribution.
+#
+# When in doubt this errs high, because the two failure modes are not
+# symmetric: trimming too eagerly silently deletes the tail of real speech,
+# whereas leaving a segment slightly long is caught downstream by the
+# music-overlap check.
+_SPEECH_BRIDGE_SECONDS = 8.0
+
 # Segment length targets. Whisper's own segments run ~30 s, which reads as a
 # wall of text; these cut at sentence ends into something followable.
 _MAX_SEGMENT_SECONDS = 18.0
@@ -79,13 +91,15 @@ class SpeakerIndex:
 
 def run(*, job_id: str, duration: float, language: str,
         asr_segments: list[dict[str, Any]], turns: list[dict[str, Any]],
-        music_regions: list[dict[str, Any]]) -> dict[str, Any]:
+        music_regions: list[dict[str, Any]],
+        speech_regions: list[dict[str, float]] | None = None) -> dict[str, Any]:
     index = SpeakerIndex(turns)
 
     # Order matters. Bounds must be corrected before anything judges a segment
     # by its timespan, and long segments must be broken up before speakers are
     # assigned, so a speaker change lands on a sentence boundary where possible.
     segments = [tighten_bounds(s) for s in asr_segments]
+    segments = [clip_to_speech(s, speech_regions or []) for s in segments]
     segments, swallowed = _drop_inside_music(segments, music_regions)
     segments = [piece for s in segments for piece in _split_long(s)]
 
@@ -140,6 +154,43 @@ def tighten_bounds(segment: dict[str, Any]) -> dict[str, Any]:
     return {**segment,
             "start": round(float(first["start"]), 3),
             "end": round(float(last["end"]), 3)}
+
+
+def clip_to_speech(segment: dict[str, Any], speech_regions: list[dict[str, float]],
+                   max_gap: float = _SPEECH_BRIDGE_SECONDS) -> dict[str, Any]:
+    """Cut a segment back to the run of speech it actually belongs to.
+
+    faster-whisper's batched pipeline collapses the audio VAD removed, so a
+    ten-second announcement can be emitted as a segment spanning the following
+    five minutes of hymn - and its *word* timings are stretched to match, which
+    is why tighten_bounds cannot rescue it. The music-overlap check then throws
+    the whole thing away as hymn narration.
+
+    VAD is the reliable anchor: whatever the ASR claims, speech cannot continue
+    across a gap where the VAD heard none. The segment is truncated at the first
+    such gap after its start.
+    """
+    if not speech_regions:
+        return segment
+    start, end = float(segment["start"]), float(segment["end"])
+    covering = [r for r in speech_regions if r["end"] > start and r["start"] < end]
+    if not covering:
+        return segment
+
+    limit = covering[0]["end"]
+    for region in covering[1:]:
+        if region["start"] - limit > max_gap:
+            break
+        limit = max(limit, region["end"])
+    if limit >= end:
+        return segment
+
+    clipped = {**segment, "end": round(limit, 3), "clipped": True}
+    words = segment.get("words")
+    if words:
+        kept = [w for w in words if w["start"] < limit]
+        clipped["words"] = kept or None
+    return clipped
 
 
 def _drop_inside_music(segments: list[dict[str, Any]],

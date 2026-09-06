@@ -58,6 +58,17 @@ MUSIC_THRESHOLD = 0.45
 # speech would suppress genuine hymns, especially congregational singing, which
 # legitimately excites both classes.
 MUSIC_OVER_SPEECH = 0.9
+# Hard veto: a window this confidently speech is never music, whatever the music
+# score. This catches the one case the ratio alone gets wrong - someone starting
+# to speak while the music is still loud, where music can score 0.84 against
+# speech 0.72 and win. Measured on two real services, that cost an announcement
+# ("Wir singen die Strophen 1 bis 4 und 6.") at the trailing edge of a hymn.
+#
+# Safe for sung passages because AudioSet separates singing from speech cleanly:
+# across 43 windows of confirmed congregational singing the speech score ran
+# 0.002-0.037, and none reached 0.6. The veto fires on 1 window in 409 and 5 in
+# 226 for the two services measured - surgical, not a blanket loosening.
+MUSIC_SPEECH_VETO = 0.6
 MUSIC_MIN_DURATION_S = 6.0
 MUSIC_MERGE_GAP_S = 4.0
 

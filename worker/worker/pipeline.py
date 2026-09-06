@@ -141,6 +141,7 @@ def process(job_id: str) -> dict[str, Any]:
             asr_segments=segments,
             turns=turns,
             music_regions=music_regions,
+            speech_regions=speech_regions,
         )
         write_json(directory / "transcript.json", document)
 
