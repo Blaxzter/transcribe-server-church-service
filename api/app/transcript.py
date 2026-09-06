@@ -68,12 +68,11 @@ class TranscriptPatch(BaseModel):
 def _with_hymns(job_id: str, doc: dict[str, Any]) -> dict[str, Any]:
     """Attach hymn references to a response without persisting them.
 
-    Derived rather than stored: it costs about a millisecond, it means all 122
-    existing recordings gain the feature with no backfill or reprocessing, and
-    editing a transcript cannot leave a stale list behind.
+    Derived rather than stored: it costs about a millisecond, every recording
+    picks up rule changes with no reprocessing, and editing a transcript cannot
+    leave a stale list behind.
     """
-    row = db.query_one("SELECT title FROM jobs WHERE id = ?", (job_id,))
-    return {**doc, "hymns": hymns.collect(doc, row["title"] if row else None)}
+    return {**doc, "hymns": hymns.extract(doc)}
 
 
 @router.get("/{job_id}/transcript")

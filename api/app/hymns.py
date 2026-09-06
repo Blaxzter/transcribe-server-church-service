@@ -4,8 +4,13 @@ Measured across 122 real services, hymn numbers are always announced as digits
 next to a cue word - "Choral 71", "Lied Nummer 254", "im Johannischen Gesangbuch
 Nr. 177". Not one was spelled out, which is why this is rules-based rather than
 another LLM pass: it keeps exact timestamps for click-to-seek, works when the
-summary model is switched off, is testable, and can backfill the whole imported
-archive without touching the GPU.
+summary model is switched off, is testable, and needs no reprocessing.
+
+Only what the recording actually says is reported. An earlier version also
+mined hymn numbers out of the filename, which covered more services but could
+not be verified and had no timing, so those entries could not be clicked and
+could not be trusted. They are gone: every hymn shown now has a moment in the
+audio behind it.
 
 The trap is verse numbers. "Die Strophen 1 bis 4 und 6" and "Nummer 144, Strophe
 1 bis 4" sit right next to hymn announcements and must never be mistaken for
@@ -144,46 +149,3 @@ def extract(document: dict[str, Any], *, context_chars: int = 90
                 "mentions": 1,
             }
     return sorted(by_number.values(), key=lambda h: h["at"])
-
-
-def numbers_from_title(title: str) -> list[int]:
-    """Hymn numbers encoded in the archive's file-naming convention.
-
-    88 of 122 titles carry them as a dash-joined group, e.g.
-    "2026-08-30 C.Schermutzki 116-122-245". Used to check the extractor against
-    what a human wrote down at the time.
-    """
-    # Skip a leading ISO date, whose own dashes would otherwise match.
-    without_date = re.sub(r"^\s*\d{4}-\d{2}-\d{2}", " ", title)
-    numbers: list[int] = []
-    for group in re.finditer(r"\b\d{1,3}(?:\s*-\s*\d{1,3})+\b", without_date):
-        for part in re.findall(r"\d{1,3}", group.group(0)):
-            value = int(part)
-            if MIN_NUMBER <= value <= MAX_NUMBER:
-                numbers.append(value)
-    return numbers
-
-
-def collect(document: dict[str, Any], title: str | None = None) -> list[dict[str, Any]]:
-    """Every hymn of a service, from both sources that know about them.
-
-    The transcript is the trustworthy source: 103 hymns across 54 services,
-    each with the moment it was announced.
-
-    Filenames are the second source and a weaker one. 88 of 122 carry a
-    dash-joined number group, but the operator does not vouch for them being
-    right, and they carry no timing - so they are merged in for coverage,
-    marked `source: "title"`, and rendered without a play control. Drop the
-    title argument to show only what the recording itself says.
-    """
-    spoken = {entry["number"]: {**entry, "source": "transcript"}
-              for entry in extract(document)}
-    for number in numbers_from_title(title or ""):
-        if number in spoken:
-            spoken[number]["source"] = "both"
-        else:
-            spoken[number] = {"number": number, "at": None, "segment_id": None,
-                              "context": None, "mentions": 0, "source": "title"}
-    # Timestamped first, in playback order; the rest by number.
-    return sorted(spoken.values(),
-                  key=lambda h: (h["at"] is None, h["at"] or 0, h["number"]))

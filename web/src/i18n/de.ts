@@ -155,13 +155,8 @@ export const de = {
 
   hymns: {
     title: "Lieder",
-    empty: "Für diese Aufnahme wurden keine Liednummern gefunden.",
-    fromTitle: "aus dem Dateinamen",
-    noneSpoken: "Keine Nummer wurde im Gottesdienst angesagt — alle stammen aus dem Dateinamen.",
-    hint: (spoken: number, total: number) =>
-      spoken === total
-        ? "Alle Nummern wurden im Gottesdienst angesagt — zum Anhören anklicken."
-        : `${spoken} von ${total} wurden angesagt; die übrigen stammen aus dem Dateinamen.`,
+    empty: "In dieser Aufnahme wurde keine Liednummer angesagt.",
+    hint: "Angesagt im Gottesdienst — zum Anhören anklicken.",
   },
 
   player: {

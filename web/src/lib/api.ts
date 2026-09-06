@@ -57,12 +57,11 @@ export interface Speaker {
 
 export interface Hymn {
   number: number;
-  /** Seconds into the recording, or null when only the filename knew about it. */
-  at: number | null;
-  segment_id: string | null;
-  context: string | null;
+  /** Seconds into the recording. Every hymn reported was actually announced. */
+  at: number;
+  segment_id: string;
+  context: string;
   mentions: number;
-  source: "transcript" | "title" | "both";
 }
 
 export interface Transcript {

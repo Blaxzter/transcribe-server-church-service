@@ -951,14 +951,6 @@ def test_number_range_is_enforced() -> None:
     assert hymns.find_in_text("Choral 999") == [999]
 
 
-def test_title_numbers_are_parsed_without_the_date() -> None:
-    """The archive encodes hymns as a dash-joined group; the ISO date in front
-    of it must not be mistaken for one."""
-    assert hymns.numbers_from_title("2026-08-30 C.Schermutzki 116-122-245") == [116, 122, 245]
-    assert hymns.numbers_from_title("2026-08-27 R. Gerhardt 284-117") == [284, 117]
-    assert hymns.numbers_from_title("audio") == []
-    assert hymns.numbers_from_title("2026-08-30 Ohne Nummern") == []
-
 
 def test_extract_keeps_timestamps_and_deduplicates() -> None:
     doc = {"segments": [
@@ -974,19 +966,6 @@ def test_extract_keeps_timestamps_and_deduplicates() -> None:
     assert got[0]["segment_id"] == "s1"
     assert got[0]["mentions"] == 2
 
-
-def test_collect_merges_title_and_transcript() -> None:
-    """72% of hymn numbers are never spoken, so the filename supplies coverage
-    and the transcript supplies the timestamp."""
-    doc = {"segments": [{"id": "s1", "type": "speech", "start": 61.0, "end": 66.0,
-                         "text": "Wir singen den Choral 122."}]}
-    got = hymns.collect(doc, "2026-08-30 C.Schermutzki 116-122-245")
-    by_number = {h["number"]: h for h in got}
-    assert set(by_number) == {116, 122, 245}
-    assert by_number[122]["source"] == "both" and by_number[122]["at"] == 61.0
-    assert by_number[116]["source"] == "title" and by_number[116]["at"] is None
-    # Timestamped entries come first so the panel reads in playback order.
-    assert got[0]["number"] == 122
 
 
 def test_hymn_context_is_centred_on_the_number() -> None:
@@ -1106,3 +1085,17 @@ def test_number_in_the_lookbehind_is_not_double_counted() -> None:
     got = hymns.extract(doc)
     assert [h["number"] for h in got] == [71]
     assert got[0]["segment_id"] == "s0"
+
+
+def test_only_verified_hymns_are_reported() -> None:
+    """The filename source is gone: every hymn reported must have a moment in
+    the audio behind it, so the UI never shows an entry that cannot be clicked."""
+    doc = {"segments": [
+        {"id": "s0", "type": "speech", "start": 61.0, "end": 66.0,
+         "text": "Wir singen den Choral 122."},
+    ]}
+    got = hymns.extract(doc)
+    assert [h["number"] for h in got] == [122]
+    assert all(h["at"] is not None and h["segment_id"] for h in got)
+    assert not hasattr(hymns, "numbers_from_title")
+    assert not hasattr(hymns, "collect")
