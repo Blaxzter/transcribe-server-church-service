@@ -181,6 +181,45 @@ service is far bigger, so the browser slices the file into 8 MB `PATCH` requests
 using the tus protocol. This also means an interrupted upload resumes instead of
 starting over.
 
+## Importing the old archive
+
+The previous system left a `db.json` next to a directory of audio files. Its
+entries already carry timestamped chunks, so there is nothing to gain from
+putting 62 hours of audio back through the GPU — the text and the timings come
+across as they are.
+
+```powershell
+docker compose run --rm `
+  -v "${PWD}/migrate-stuff:/import:ro" `
+  worker python -m worker.import_legacy --source /import --jobs 6
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--limit N` | all | do a couple first as a trial |
+| `--jobs N` | 4 | parallel ffmpeg workers |
+| `--originals` | `skip` | `copy` also duplicates the source audio into `data/` |
+| `--force` | off | re-import entries already present |
+
+What it produces per recording: the **48 kbps Opus proxy** and **waveform
+peaks** — the two things the browser needs and the old system never had — plus a
+`transcript.json` built from the chunks. Both are ffmpeg-and-numpy work; no
+models are loaded, so this runs on CPU while the GPU stays free.
+
+The 16 kHz WAV is written only to compute peaks and deleted immediately: at
+~110 MB per hour it would add far more than the audio itself, and no GPU stage
+will ever read it. `--originals skip` likewise means the ~12 GB archive is not
+duplicated; the UI hides the "download original" button for those jobs.
+
+Job ids are derived from the source UUID, so **the whole import is idempotent** —
+re-running updates jobs rather than duplicating them, and an interrupted run can
+simply be repeated.
+
+**Imported transcripts have no speaker labels, music markers or summary**, because
+the source has no such data. The UI says so on the job page rather than letting
+it look like diarization failed. Running such a job through the normal *Neu
+verarbeiten* button produces all three, at the cost of the full pipeline.
+
 ## Architecture
 
 ```

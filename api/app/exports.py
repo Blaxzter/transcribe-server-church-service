@@ -17,9 +17,22 @@ FORMATS = {"txt", "md", "srt", "vtt", "docx"}
 _FILENAME_UNSAFE = re.compile(r"[^\w.\- ]+", re.UNICODE)
 
 
-def speaker_label(doc: dict[str, Any], speaker_id: str | None) -> str:
+# A block is broken at these limits even when the speaker has not changed.
+# Without them an imported transcript - which has no speakers at all, so every
+# segment groups with the next - comes out as one unreadable paragraph running
+# the length of the service.
+MAX_BLOCK_SECONDS = 45.0
+MAX_BLOCK_CHARS = 900
+
+
+def speaker_label(doc: dict[str, Any], speaker_id: str | None) -> str | None:
+    """The display name for a speaker, or None when the source has no speakers.
+
+    Imported transcripts carry no diarization, and labelling every paragraph
+    "Unbekannt" is worse than labelling none of them.
+    """
     if not speaker_id:
-        return "Unbekannt"
+        return None
     entry = doc.get("speakers", {}).get(speaker_id) or {}
     return entry.get("label") or speaker_id.replace("SPEAKER_", "Sprecher ")
 
@@ -53,7 +66,14 @@ def grouped(doc: dict[str, Any]) -> Iterator[dict[str, Any]]:
         if not text:
             continue
         key = segment.get("marker") if segment.get("type") == "music" else segment.get("speaker")
-        if block and block["key"] == key and segment.get("type") != "music":
+        fits = (
+            block is not None
+            and block["key"] == key
+            and segment.get("type") != "music"
+            and len(block["text"]) + len(text) + 1 <= MAX_BLOCK_CHARS
+            and segment.get("end", block["end"]) - block["start"] <= MAX_BLOCK_SECONDS
+        )
+        if fits:
             block["text"] += " " + text
             block["end"] = segment.get("end", block["end"])
         else:
@@ -88,7 +108,9 @@ def render_txt(job: Any, doc: dict[str, Any]) -> str:
         if block["type"] == "music":
             lines.append(f"[{stamp}] {block['text']}")
         else:
-            lines.append(f"[{stamp}] {speaker_label(doc, block['speaker'])}: {block['text']}")
+            label = speaker_label(doc, block["speaker"])
+            prefix = f"{label}: " if label else ""
+            lines.append(f"[{stamp}] {prefix}{block['text']}")
         lines.append("")
     return "\n".join(lines)
 
@@ -105,8 +127,9 @@ def render_md(job: Any, doc: dict[str, Any]) -> str:
         if block["type"] == "music":
             lines += [f"`{stamp}` — *{block['text']}*", ""]
         else:
-            lines += [f"**{speaker_label(doc, block['speaker'])}** `{stamp}`", "",
-                      block["text"], ""]
+            label = speaker_label(doc, block["speaker"])
+            heading = f"**{label}** `{stamp}`" if label else f"`{stamp}`"
+            lines += [heading, "", block["text"], ""]
     return "\n".join(lines)
 
 
@@ -120,7 +143,8 @@ def _subtitles(doc: dict[str, Any], *, vtt: bool) -> str:
             continue
         speaker = ""
         if segment.get("type") != "music":
-            speaker = f"{speaker_label(doc, segment.get('speaker'))}: "
+            label = speaker_label(doc, segment.get("speaker"))
+            speaker = f"{label}: " if label else ""
         if not vtt:
             out.append(str(index))
         out.append(f"{clock(segment.get('start', 0), millis_sep=sep)} --> "
@@ -156,8 +180,10 @@ def render_docx(job: Any, doc: dict[str, Any]) -> bytes:
             run.italic = True
             run.font.color.rgb = RGBColor(0x77, 0x77, 0x77)
             continue
-        header = paragraph.add_run(f"{speaker_label(doc, block['speaker'])}  ")
-        header.bold = True
+        label = speaker_label(doc, block["speaker"])
+        if label:
+            header = paragraph.add_run(f"{label}  ")
+            header.bold = True
         time_run = paragraph.add_run(f"{stamp}\n")
         time_run.font.size = Pt(8)
         time_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)

@@ -170,9 +170,18 @@ export function JobDetailPage() {
             </Card>
 
             <div className="space-y-4">
+              {doc?.source === "legacy-import" && (
+                <Card className="border-dashed">
+                  <CardContent className="pt-5">
+                    <p className="text-sm text-muted-foreground">
+                      {de.transcript.imported}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
               <SummaryPanel doc={doc} />
               <SpeakerLegend doc={doc} />
-              <ExportPanel jobId={id} />
+              <ExportPanel jobId={id} hasOriginal={job.has_original} />
             </div>
           </div>
         </div>
@@ -382,7 +391,7 @@ function SpeakerLegend({ doc }: { doc: Transcript | null }) {
   );
 }
 
-function ExportPanel({ jobId }: { jobId: string }) {
+function ExportPanel({ jobId, hasOriginal }: { jobId: string; hasOriginal: boolean }) {
   return (
     <Card>
       <CardHeader>
@@ -404,17 +413,19 @@ function ExportPanel({ jobId }: { jobId: string }) {
             {entry.label}
           </Button>
         ))}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="justify-start"
-          onClick={() => {
-            window.location.href = api.originalUrl(jobId);
-          }}
-        >
-          <Download />
-          {de.exportMenu.original}
-        </Button>
+        {hasOriginal && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="justify-start"
+            onClick={() => {
+              window.location.href = api.originalUrl(jobId);
+            }}
+          >
+            <Download />
+            {de.exportMenu.original}
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

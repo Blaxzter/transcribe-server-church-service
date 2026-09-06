@@ -251,6 +251,7 @@ def test_grouped_merges_consecutive_same_speaker() -> None:
     assert blocks[0]["text"] == "Guten Morgen. Schön, dass Sie da sind."
     assert blocks[1]["type"] == "music"
     assert blocks[2]["text"] == "Wir beten."
+    assert exports.speaker_label(doc, "SPEAKER_00") == "Pfarrerin"
 
 
 # ---------------------------------------------------------------------------
@@ -580,3 +581,122 @@ def test_final_prompt_contains_no_example_outline() -> None:
     assert "z. b." not in lowered and "z.b." not in lowered
     # The give-away sequence must not appear as a suggestion.
     assert "fuerbitten, abendmahl" not in lowered
+
+
+# ---------------------------------------------------------------------------
+# Legacy import
+# ---------------------------------------------------------------------------
+def test_legacy_job_id_is_deterministic() -> None:
+    """Deriving the job id from the source UUID is what makes the whole import
+    idempotent - a re-run updates the same job instead of duplicating it."""
+    from worker.import_legacy import legacy_job_id
+
+    got = legacy_job_id("dfa30879-982c-4cb6-87ec-765e98bdaa6d")
+    assert got == "dfa30879982c4cb687ec765e98bdaa6d"
+    assert len(got) == 32 and got.isalnum()
+    assert got == legacy_job_id(got.upper().replace("", ""))  # stable
+
+
+def test_created_at_is_parsed_to_date() -> None:
+    from worker.import_legacy import parse_created_at
+
+    iso, date = parse_created_at("18.08.2023 23:12:22")
+    assert date == "2023-08-18"
+    assert iso.startswith("2023-08-18T23:12:22")
+    assert parse_created_at("nonsense") == (None, None)
+
+
+def test_title_comes_from_the_old_file_name() -> None:
+    from worker.import_legacy import nice_title
+
+    assert nice_title({"file_name": "schule_full.mp3"}) == "schule full"
+    assert nice_title({"file_name": "", "transcription_name": "x.mp3 - 18.08.2023"}) == "x"
+    assert nice_title({}) == "Importierte Aufnahme"
+
+
+def test_chunks_become_timed_segments() -> None:
+    from worker.import_legacy import build_transcript
+
+    entry = {
+        "id": "abc", "text": "ignored",
+        "chunks": [
+            {"start": 0.0, "end": 5.96, "text": "Gott zum Gruss."},
+            {"start": 5.96, "end": 29.16, "text": "Wenn ihr nur sehen duerftet."},
+            {"start": 29.16, "end": 30.0, "text": "   "},  # blank -> dropped
+        ],
+    }
+    doc = build_transcript(entry, "job1", 30.0)
+    assert doc["source"] == "legacy-import"
+    assert doc["speakers"] == {}
+    assert [s["text"] for s in doc["segments"]] == [
+        "Gott zum Gruss.", "Wenn ihr nur sehen duerftet."]
+    assert doc["segments"][1]["start"] == 5.96
+    assert all(s["speaker"] is None for s in doc["segments"])
+    assert all(s["end"] >= s["start"] for s in doc["segments"])
+
+
+def test_entry_without_chunks_keeps_its_text() -> None:
+    from worker.import_legacy import build_transcript
+
+    doc = build_transcript({"id": "x", "text": "Ein ganzer Gottesdienst.", "chunks": []},
+                           "job2", 120.0)
+    assert len(doc["segments"]) == 1
+    assert doc["segments"][0]["text"] == "Ein ganzer Gottesdienst."
+    assert doc["segments"][0]["end"] == 120.0
+
+
+# ---------------------------------------------------------------------------
+# Exports for transcripts without speakers (imported archive)
+# ---------------------------------------------------------------------------
+def _speakerless_doc(count: int = 40) -> dict:
+    return {
+        "speakers": {},
+        "source": "legacy-import",
+        "segments": [
+            {"id": f"s{i}", "type": "speech", "speaker": None,
+             "start": i * 6.0, "end": i * 6.0 + 6.0,
+             "text": f"Satz Nummer {i} mit etwas Text darin."}
+            for i in range(count)
+        ],
+    }
+
+
+def test_speakerless_transcript_is_not_one_giant_paragraph() -> None:
+    """Regression: every segment had speaker None, so they all grouped together
+    and a 13-minute recording exported as a single 7000-character block."""
+    from app import exports
+
+    blocks = list(exports.grouped(_speakerless_doc()))
+    assert len(blocks) > 1
+    assert all(len(b["text"]) <= exports.MAX_BLOCK_CHARS for b in blocks)
+    assert all(b["end"] - b["start"] <= exports.MAX_BLOCK_SECONDS + 6.01
+               for b in blocks)
+
+
+def test_no_speaker_means_no_label_rather_than_unbekannt() -> None:
+    from app import exports
+
+    doc = _speakerless_doc(3)
+    assert exports.speaker_label(doc, None) is None
+
+    job = {"title": "Kirchentag", "service_date": "2023-08-18"}
+    text = exports.render_txt(job, doc)
+    assert "Unbekannt" not in text
+    assert "Satz Nummer 0" in text
+
+    markdown = exports.render_md(job, doc)
+    assert "Unbekannt" not in markdown
+
+    subtitles = exports._subtitles(doc, vtt=False)
+    assert "Unbekannt" not in subtitles
+    assert subtitles.startswith("1\n")
+
+
+def test_speaker_label_still_used_when_speakers_exist() -> None:
+    from app import exports
+
+    doc = {"speakers": {"SPEAKER_00": {"label": "Pfarrerin"}},
+           "segments": [{"id": "s0", "type": "speech", "speaker": "SPEAKER_00",
+                         "start": 0, "end": 5, "text": "Guten Morgen."}]}
+    assert "Pfarrerin: Guten Morgen." in exports.render_txt(
+        {"title": "x", "service_date": None}, doc)

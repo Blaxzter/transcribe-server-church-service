@@ -91,6 +91,9 @@ def _serialize(row: Any) -> dict[str, Any]:
     job["has_peaks"] = (directory / "peaks.json").exists()
     job["has_transcript"] = (directory / "transcript.json").exists()
     job["has_summary"] = (directory / "summary.json").exists()
+    # Imported jobs keep only the Opus proxy by default, so the UI must not
+    # offer a download that would 404.
+    job["has_original"] = bool(job["original_path"]) and Path(job["original_path"]).exists()
     return job
 
 
@@ -119,6 +122,48 @@ async def patch_job(job_id: str, payload: JobPatch) -> dict[str, Any]:
     if fields:
         db.update_row("jobs", job_id, **fields)
     return _serialize(_require(job_id))
+
+
+class JobImport(BaseModel):
+    """A job whose transcript already exists and must not be reprocessed."""
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    title: str = Field(max_length=300)
+    original_filename: str
+    service_date: str | None = None
+    original_path: str | None = None
+    size_bytes: int | None = None
+    duration_s: float | None = None
+    created_at: str | None = None
+
+
+@router.post("/import")
+async def import_job(payload: JobImport) -> dict[str, Any]:
+    """Register an already-transcribed recording.
+
+    The importer runs in the worker container because it needs ffmpeg, but the
+    API is the only process allowed to write SQLite - hence this endpoint rather
+    than the worker touching the database. Re-running an import updates the row
+    instead of duplicating it, so the whole batch is safe to repeat.
+    """
+    existing = db.query_one("SELECT id FROM jobs WHERE id = ?", (payload.id,))
+    fields = payload.model_dump(exclude={"id"}, exclude_none=True)
+    created = fields.pop("created_at", None) or db.now()
+
+    if existing:
+        db.update_row("jobs", payload.id, status="done", progress=1.0, stage=None,
+                      error=None, message=None, **fields)
+    else:
+        db.execute(
+            "INSERT INTO jobs (id, title, service_date, original_filename,"
+            " original_path, size_bytes, duration_s, status, progress, options,"
+            " created_at, updated_at, finished_at)"
+            " VALUES (?,?,?,?,?,?,?, 'done', 1.0, ?, ?, ?, ?)",
+            (payload.id, payload.title, payload.service_date,
+             payload.original_filename, payload.original_path, payload.size_bytes,
+             payload.duration_s, json.dumps({"imported": True}),
+             created, db.now(), db.now()),
+        )
+    return _serialize(_require(payload.id))
 
 
 @router.delete("/{job_id}")
@@ -221,7 +266,11 @@ async def get_audio(job_id: str) -> FileResponse:
 @router.get("/{job_id}/original")
 async def get_original(job_id: str) -> FileResponse:
     row = _require(job_id)
-    path = Path(row["original_path"] or "")
-    if not path.exists():
+    # Imported jobs keep no original. Guard on is_file() rather than exists():
+    # Path("") is Path("."), which exists, and serving a directory is a 500.
+    if not row["original_path"]:
+        raise HTTPException(404, "Fuer diese Aufnahme wurde keine Originaldatei gespeichert")
+    path = Path(row["original_path"])
+    if not path.is_file():
         raise HTTPException(404, "Originaldatei nicht gefunden")
     return FileResponse(path, filename=row["original_filename"])

@@ -25,6 +25,7 @@ export interface Job {
   has_peaks: boolean;
   has_transcript: boolean;
   has_summary: boolean;
+  has_original: boolean;
 }
 
 export interface Word {
@@ -61,6 +62,8 @@ export interface Transcript {
   segments: Segment[];
   summary?: string | null;
   outline?: string[] | null;
+  /** "legacy-import" means no speakers, music markers or summary. */
+  source?: string | null;
   updated_at?: string;
 }
 

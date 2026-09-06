@@ -94,6 +94,8 @@ export const de = {
     save: "Speichern",
     cancel: "Abbrechen",
     music: "Musik",
+    imported: "Aus dem alten System übernommen — ohne Sprecher, Musikmarkierungen und Zusammenfassung.",
+    reprocess: "Neu verarbeiten, um Sprecher und Musik zu erkennen",
     segments: "Abschnitte",
     followPlayback: "Wiedergabe folgen",
   },
