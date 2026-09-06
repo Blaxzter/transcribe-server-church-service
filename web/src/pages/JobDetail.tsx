@@ -276,6 +276,7 @@ export function JobDetailPage() {
                 value={tab}
                 onValueChange={setTab}
                 onSeek={seek}
+                onRenameSpeaker={renameSpeaker}
                 className={SIDEBAR_PANE}
               />
             ) : (

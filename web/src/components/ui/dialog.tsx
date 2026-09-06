@@ -13,6 +13,7 @@ const SIZES = {
   md: "max-w-lg",
   lg: "max-w-2xl",
   xl: "max-w-5xl",
+  "2xl": "max-w-[80rem]",
 } as const;
 
 export interface DialogProps {
@@ -26,6 +27,8 @@ export interface DialogProps {
   size?: keyof typeof SIZES;
   hideClose?: boolean;
   className?: string;
+  /** For a dialog whose body owns the scrolling instead of the panel. */
+  bodyClassName?: string;
   initialFocusRef?: React.RefObject<HTMLElement>;
 }
 
@@ -43,6 +46,7 @@ export function Dialog({
   size = "sm",
   hideClose,
   className,
+  bodyClassName,
   initialFocusRef,
 }: DialogProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -145,8 +149,8 @@ export function Dialog({
             <X />
           </Button>
         )}
-        {children && <div className="mt-4">{children}</div>}
-        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
+        {children && <div className={cn("mt-4", bodyClassName)}>{children}</div>}
+        {footer && <div className="mt-5 flex shrink-0 justify-end gap-2">{footer}</div>}
       </div>
     </div>,
     document.body,

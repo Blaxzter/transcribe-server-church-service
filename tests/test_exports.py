@@ -6,7 +6,9 @@ needs torch; this one only needs the API package and python-docx.
 from __future__ import annotations
 
 import io
+import struct
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "api"))
 
-from app import exports  # noqa: E402
+from app import docx_fonts, exports  # noqa: E402
 from app.exports import ExportOptions  # noqa: E402
 
 JOB = {"title": "Gottesdienst", "service_date": "2023-08-18", "duration_s": 3600.0}
@@ -310,11 +312,12 @@ def test_template_page_breaks_between_sections(tmp_path: Path) -> None:
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from fastapi.testclient import TestClient
 
-    from app import db, main, templates, transcript
+    from app import db, fonts, main, templates, transcript
 
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(db, "_conn", None)
     monkeypatch.setattr(templates, "TEMPLATES_DIR", tmp_path / "templates")
+    monkeypatch.setattr(fonts, "FONTS_DIR", tmp_path / "fonts")
     jobs_dir = tmp_path / "jobs"
     monkeypatch.setattr(transcript, "job_dir", lambda job_id: jobs_dir / job_id)
 
@@ -406,3 +409,98 @@ def test_template_upload_rejects_non_docx(client) -> None:
                          files={"file": ("x.docx", b"not a zip", exports.DOCX_MEDIA_TYPE)})
     assert broken.status_code == 400
     assert client.get("/api/templates").json()["templates"] == []
+
+
+# ---------------------------------------------------------------------------
+# Fonts
+# ---------------------------------------------------------------------------
+def _font_file(family: str = "Testschrift") -> bytes:
+    """A minimal sfnt font: a table directory and a name table, nothing else."""
+    text = family.encode("utf-16-be")
+    # One Windows/Unicode record for the family name (id 1).
+    record = struct.pack(">HHHHHH", 3, 1, 0x409, 1, len(text), 0)
+    name_table = struct.pack(">HHH", 0, 1, 6 + 12) + record + text
+    header = struct.pack(">IHHHH", 0x00010000, 1, 16, 0, 0)
+    directory = struct.pack(">4sIII", b"name", 0, 28, len(name_table))
+    return header + directory + name_table + bytes(64)
+
+
+def test_family_name_is_read_out_of_the_file() -> None:
+    assert docx_fonts.family_name(_font_file("Source Serif 4")) == "Source Serif 4"
+    assert docx_fonts.family_name(b"not a font at all") is None
+    assert docx_fonts.family_name(b"") is None
+
+
+def test_export_is_a4() -> None:
+    from docx import Document
+    from docx.shared import Cm
+
+    section = Document(io.BytesIO(exports.render_docx(JOB, _service()))).sections[0]
+    # python-docx stores twips, so the round trip is off by a fraction of a mm.
+    assert abs(section.page_width - Cm(21)) < Cm(0.01)
+    assert abs(section.page_height - Cm(29.7)) < Cm(0.01)
+    assert abs(section.left_margin - Cm(2.5)) < Cm(0.01)
+
+
+def test_chosen_font_is_named_and_embedded() -> None:
+
+    font = _font_file("Testschrift")
+    payload = exports.render_docx(JOB, _service(), ExportOptions(), ("Testschrift", font))
+    archive = zipfile.ZipFile(io.BytesIO(payload))
+
+    theme = archive.read("word/theme/theme1.xml").decode()
+    assert theme.count('<a:latin typeface="Testschrift"/>') == 2  # major and minor
+
+    table = archive.read(docx_fonts.FONT_TABLE_PART).decode()
+    assert '<w:font w:name="Testschrift">' in table
+    key = table.split('w:fontKey="')[1].split('"')[0]
+
+    # Word only finds the file through the relationship and the content type.
+    assert 'Extension="odttf"' in archive.read("[Content_Types].xml").decode()
+    assert docx_fonts.FONT_REL_TYPE in archive.read(docx_fonts.FONT_TABLE_RELS).decode()
+    assert "<w:embedTrueTypeFonts/>" in archive.read("word/settings.xml").decode()
+
+    # The stored copy is the font again once the obfuscation is undone.
+    stored = archive.read(docx_fonts.FONT_PART)
+    assert stored[:32] != font[:32]
+    assert docx_fonts._obfuscate(stored, key) == font
+
+    assert "Guten Morgen, liebe Gemeinde." in "\n".join(_paragraph_texts(payload))
+
+
+def test_font_lifecycle(client) -> None:
+    assert client.get("/api/fonts").json()["fonts"] == []
+
+    upload = client.post(
+        "/api/fonts",
+        files={"file": ("Testschrift-Regular.ttf", _font_file("Testschrift"), "font/ttf")},
+    )
+    assert upload.status_code == 201, upload.text
+    font = upload.json()
+    assert font["family"] == "Testschrift"
+    assert font["name"] == "Testschrift"
+
+    renamed = client.patch(f"/api/fonts/{font['id']}", json={"name": " Predigtschrift "})
+    assert renamed.json()["name"] == "Predigtschrift"
+    assert renamed.json()["family"] == "Testschrift"
+
+    exported = client.post("/api/jobs/j1/export/docx", json={"font": font["id"]})
+    assert exported.status_code == 200
+    theme = zipfile.ZipFile(io.BytesIO(exported.content)).read("word/theme/theme1.xml")
+    assert '<a:latin typeface="Testschrift"/>' in theme.decode()
+
+    assert client.get(f"/api/fonts/{font['id']}/file").status_code == 200
+    assert client.delete(f"/api/fonts/{font['id']}").status_code == 200
+    assert client.get("/api/fonts").json()["fonts"] == []
+    gone = client.post("/api/jobs/j1/export/docx", json={"font": font["id"]})
+    assert gone.status_code == 404
+
+
+def test_font_upload_rejects_what_is_not_a_font(client) -> None:
+    wrong_suffix = client.post("/api/fonts",
+                               files={"file": ("x.woff2", _font_file(), "font/woff2")})
+    assert wrong_suffix.status_code == 400
+    unreadable = client.post("/api/fonts",
+                             files={"file": ("x.ttf", b"not a font", "font/ttf")})
+    assert unreadable.status_code == 400
+    assert client.get("/api/fonts").json()["fonts"] == []

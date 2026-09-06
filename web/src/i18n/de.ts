@@ -227,6 +227,13 @@ export const de = {
     templatesOnlyDocx: "Vorlagen gibt es nur für Word-Dokumente.",
     templateNote:
       "Bei einer Vorlage bestimmen deren Platzhalter, was erscheint; Titel und Zusammenfassung kommen nur dort hin, wo die Vorlage sie vorsieht.",
+    font: "Schriftart",
+    noFont: "Standardschrift",
+    fontMissing: "Die gespeicherte Schriftart gibt es nicht mehr.",
+    manageFonts: "Schriften verwalten",
+    fontsOnlyPlain: "Eine Vorlage bringt ihre eigene Schrift mit.",
+    fontNote:
+      "Die Schrift wird in das Dokument eingebettet und ist damit auch auf einem Rechner da, auf dem sie nicht installiert ist.",
     speakers: "Sprecher",
     speakersHint: "Nur die angehakten Sprecher kommen in die Datei.",
     sections: "Abschnitte",
@@ -257,7 +264,8 @@ export const de = {
     previewLoading: "Vorschau wird erstellt…",
     previewFailed: "Die Vorschau konnte nicht erstellt werden.",
     previewEmpty: "Mit dieser Auswahl bleibt kein Text übrig.",
-    previewNote: "Die Vorschau zeigt Inhalt und Aufbau; Schrift und Ränder gibt Word vor.",
+    previewNote: "So sieht die Datei aus — A4, mit Schrift und Rändern des Dokuments.",
+    previewNoteText: "Der Inhalt der Datei, Zeile für Zeile.",
     selectionSpeakers: "Sprecher",
     selectionSections: "Abschnitte",
     download: "Herunterladen",
@@ -304,6 +312,29 @@ export const de = {
     } as Record<string, string>,
   },
 
+  /** Uploaded fonts for the built-in Word layout. */
+  fonts: {
+    title: "Schriften",
+    description:
+      "Eine Schriftdatei aus Word oder vom Rechner. Sie wird in jedes Dokument eingebettet, das sie benutzt, und ist damit auch auf einem fremden Rechner da.",
+    upload: "Schrift hochladen",
+    uploading: "Wird hochgeladen…",
+    empty: "Noch keine Schrift vorhanden.",
+    emptyHint:
+      "TrueType- oder OpenType-Datei (.ttf oder .otf) hochladen, dann steht sie im Export zur Auswahl.",
+    rename: "Umbenennen",
+    name: "Name",
+    save: "Speichern",
+    delete: "Löschen",
+    deleteTitle: "Schrift löschen",
+    deleteDescription:
+      "Die Schrift wird entfernt. Bereits exportierte Dokumente bleiben unberührt.",
+    download: "Schriftdatei herunterladen",
+    family: "Schriftfamilie",
+    sample: "Grüße aus dem Gottesdienst — 0123456789",
+    back: "Zurück zum Export",
+  },
+
   /** Short feedback shown in the toast stack. */
   toast: {
     deleted: "Aufnahme gelöscht",
@@ -317,6 +348,10 @@ export const de = {
     templateUploadFailed: "Vorlage konnte nicht hochgeladen werden",
     templateDeleted: "Vorlage gelöscht",
     templateDeleteFailed: "Vorlage konnte nicht gelöscht werden",
+    fontUploaded: "Schrift gespeichert",
+    fontUploadFailed: "Schrift konnte nicht hochgeladen werden",
+    fontDeleted: "Schrift gelöscht",
+    fontDeleteFailed: "Schrift konnte nicht gelöscht werden",
     retryQueued: "Aufnahme wird neu verarbeitet",
     retryFailed: "Neuverarbeitung konnte nicht gestartet werden",
   },

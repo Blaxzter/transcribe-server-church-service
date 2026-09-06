@@ -351,7 +351,9 @@ filter will catch verbatim regurgitation either way.
 ## Export
 
 The transcript is refined in Word, so the export is built around that: pick
-what goes in, decide how it looks, pour it into your own template.
+what goes in, decide how it looks, pour it into your own template. The dialog
+is two panels — the settings on the left, and on the right the page they
+produce, drawn as the A4 sheet it will be printed on.
 
 **What goes in.** *Export einrichten…* lists the speakers and the sections of
 the service. A section is a run of speech between two pieces of music
@@ -393,6 +395,20 @@ untouched and flagged in the template list. Templates live in
 `data/templates/`, one file per row in the `templates` table. The preview in
 the dialog renders the finished `.docx` in the browser, template included.
 
+**Fonts.** Upload a `.ttf` or `.otf` under *Schriften verwalten* and pick it as
+the *Schriftart* of the export. The built-in layout has no font of its own —
+it asks the document theme, and the chosen font is written into that theme, so
+body text, headings and the title all follow. The file itself travels inside
+the `.docx` the way Word embeds fonts (an obfuscated `.odttf` part plus a
+`fontTable` entry), which is what makes the document look the same on a
+machine that has never had the font installed — and what lets the preview
+render it. A template is left alone: it brings its own fonts, so the picker is
+disabled while one is selected. Fonts live in `data/fonts/`, one file per row
+in the `fonts` table; see `api/app/docx_fonts.py`.
+
+Without a template the page is A4 with 2.5 cm side margins — python-docx
+builds on a US Letter template, which is not a page anyone here prints on.
+
 The old `GET /api/jobs/<id>/export/<fmt>` still produces the fixed
 everything-included layout; the dialog uses `POST` with an options body
 (see `ExportOptions` in `api/app/exports.py`).
@@ -408,8 +424,9 @@ cd web; npm run dev                     # frontend on :5173, proxies to :8080
 
 ```
 data/
-  transcribe.db              SQLite (jobs, uploads, templates)
+  transcribe.db              SQLite (jobs, uploads, templates, fonts)
   templates/<id>.docx        Word templates for the export
+  fonts/<id>.font            uploaded .ttf/.otf for the export
   uploads/*.part          in-flight chunked uploads
   jobs/<id>/
     original.<ext>        what was uploaded

@@ -13,14 +13,13 @@ import type { Segment, Transcript as TranscriptDoc } from "@/lib/api";
 import { cn, formatTime, withAlpha } from "@/lib/utils";
 import { de } from "@/i18n/de";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchInput } from "@/components/ui/search-input";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
+import { RenameSpeakerDialog } from "@/components/detail/RenameSpeakerDialog";
 
 interface TranscriptProps {
   doc: TranscriptDoc;
@@ -385,68 +384,6 @@ function Highlight({ text, needle }: { text: string; needle: string }) {
   }
   parts.push(text.slice(cursor));
   return <>{parts}</>;
-}
-
-function RenameSpeakerDialog({
-  currentLabel,
-  onSave,
-  onClose,
-}: {
-  currentLabel: string;
-  onSave: (label: string) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [value, setValue] = useState(currentLabel);
-  const [pending, setPending] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const label = value.trim();
-
-  const save = async () => {
-    if (!label || pending) return;
-    setPending(true);
-    try {
-      await onSave(label);
-      onClose();
-    } finally {
-      setPending(false);
-    }
-  };
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => !open && !pending && onClose()}
-      title={de.transcript.renameSpeaker}
-      initialFocusRef={inputRef}
-      footer={
-        <>
-          <Button variant="ghost" disabled={pending} onClick={onClose}>
-            {de.transcript.cancel}
-          </Button>
-          <Button disabled={!label || pending} onClick={() => void save()}>
-            {de.transcript.save}
-          </Button>
-        </>
-      }
-    >
-      <label className="mb-1.5 block text-sm text-muted-foreground" htmlFor="speaker-name">
-        {de.transcript.speakerName}
-      </label>
-      <Input
-        id="speaker-name"
-        ref={inputRef}
-        value={value}
-        disabled={pending}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            void save();
-          }
-        }}
-      />
-    </Dialog>
-  );
 }
 
 /** Flat text for the clipboard: "12:34  Sprecher: Text". */

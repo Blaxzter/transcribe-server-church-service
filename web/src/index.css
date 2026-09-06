@@ -179,6 +179,25 @@ body {
   scrollbar-width: thin;
 }
 
+/*
+ * The export preview: docx-preview appends one <section> per page, sized in
+ * real print units. We draw the sheet ourselves (its own wrapper is a grey
+ * flex column with fixed padding) and scale the whole stack down to the width
+ * of the panel, so the margins stay in proportion to the page instead of
+ * eating it. Paper stays white in the dark theme; it is printed paper.
+ */
+.docx-paper > section {
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2), 0 8px 24px rgb(0 0 0 / 0.12);
+  /* Word does not hyphenate German body text by default; docx-preview does. */
+  hyphens: none;
+}
+
+.docx-paper > section + section {
+  margin-top: 1.5rem;
+}
+
 @keyframes transcribe-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }

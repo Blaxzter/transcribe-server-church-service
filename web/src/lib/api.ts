@@ -98,6 +98,8 @@ export interface ExportOptions {
   section_break?: SectionBreak;
   /** Template id; DOCX only. */
   template?: string | null;
+  /** Font id; DOCX without a template only. */
+  font?: string | null;
 }
 
 /** A run of speech between two pieces of music, as the export picker shows it. */
@@ -127,6 +129,17 @@ export interface Template {
   updated_at: string;
 }
 
+export interface Font {
+  id: string;
+  /** What the user called it; the family is what the document asks Word for. */
+  name: string;
+  family: string;
+  filename: string;
+  size_bytes: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TemplateList {
   templates: Template[];
   /** Placeholder names the export can fill. */
@@ -152,6 +165,17 @@ export class ApiError extends Error {
   }
 }
 
+/** The server's `detail` for a failed response, or the bare status text. */
+async function failure(response: Response): Promise<ApiError> {
+  let detail = response.statusText;
+  try {
+    detail = (await response.json())?.detail ?? detail;
+  } catch {
+    /* non-JSON error body */
+  }
+  return new ApiError(response.status, detail);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -160,16 +184,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  if (!response.ok) {
-    let detail = response.statusText;
-    try {
-      const body = await response.json();
-      detail = body?.detail ?? detail;
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(response.status, detail);
-  }
+  if (!response.ok) throw await failure(response);
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 
@@ -220,15 +235,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(options),
     });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        detail = (await response.json())?.detail ?? detail;
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new ApiError(response.status, detail);
-    }
+    if (!response.ok) throw await failure(response);
     const disposition = response.headers.get("Content-Disposition") ?? "";
     const match = /filename="([^"]+)"/.exec(disposition);
     return {
@@ -239,22 +246,8 @@ export const api = {
 
   listTemplates: () => request<TemplateList>("/api/templates"),
 
-  uploadTemplate: async (file: File, name?: string) => {
-    const body = new FormData();
-    body.append("file", file, file.name);
-    if (name) body.append("name", name);
-    const response = await fetch("/api/templates", { method: "POST", body });
-    if (!response.ok) {
-      let detail = response.statusText;
-      try {
-        detail = (await response.json())?.detail ?? detail;
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    return (await response.json()) as Template;
-  },
+  uploadTemplate: (file: File, name?: string) =>
+    upload<Template>("/api/templates", file, name),
 
   renameTemplate: (id: string, name: string) =>
     request<Template>(`/api/templates/${id}`, {
@@ -266,7 +259,29 @@ export const api = {
     request<{ status: string }>(`/api/templates/${id}`, { method: "DELETE" }),
 
   templateFileUrl: (id: string) => `/api/templates/${id}/file`,
+
+  listFonts: () => request<{ fonts: Font[] }>("/api/fonts"),
+
+  uploadFont: (file: File, name?: string) => upload<Font>("/api/fonts", file, name),
+
+  renameFont: (id: string, name: string) =>
+    request<Font>(`/api/fonts/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+
+  deleteFont: (id: string) =>
+    request<{ status: string }>(`/api/fonts/${id}`, { method: "DELETE" }),
+
+  fontFileUrl: (id: string) => `/api/fonts/${id}/file`,
 };
+
+/** A multipart POST; `request` cannot do these, it sets a JSON content type. */
+async function upload<T>(path: string, file: File, name?: string): Promise<T> {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  if (name) body.append("name", name);
+  const response = await fetch(path, { method: "POST", body });
+  if (!response.ok) throw await failure(response);
+  return (await response.json()) as T;
+}
 
 /** Hands a blob to the browser as a download and cleans up after itself. */
 export function saveFile({ blob, filename }: ExportFile): void {

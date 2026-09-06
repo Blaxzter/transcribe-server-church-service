@@ -1,11 +1,21 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Pencil } from "lucide-react";
 import type { Transcript } from "@/lib/api";
 import { de } from "@/i18n/de";
 import { withAlpha } from "@/lib/utils";
 import { PanelHeading } from "@/components/detail/PanelHeading";
+import { RenameSpeakerDialog } from "@/components/detail/RenameSpeakerDialog";
+import { Button } from "@/components/ui/button";
+
+interface SpeakerLegendProps {
+  doc: Transcript | null;
+  onRenameSpeaker?: (speakerId: string, label: string) => Promise<void>;
+}
 
 /** Speakers with how much of the service each of them actually speaks. */
-export function SpeakerLegend({ doc }: { doc: Transcript | null }) {
+export function SpeakerLegend({ doc, onRenameSpeaker }: SpeakerLegendProps) {
+  const [renaming, setRenaming] = useState<string | null>(null);
+
   const speakers = useMemo(() => {
     if (!doc) return [];
     const seconds = new Map<string, number>();
@@ -30,7 +40,7 @@ export function SpeakerLegend({ doc }: { doc: Transcript | null }) {
         {speakers.map((speaker) => (
           <li
             key={speaker.id}
-            className="flex items-center gap-2.5 rounded-md px-2.5 py-2"
+            className="group flex items-center gap-2.5 rounded-md py-1 pl-2.5 pr-1"
             style={{ background: withAlpha(speaker.color, 0.12) }}
           >
             <span
@@ -43,9 +53,30 @@ export function SpeakerLegend({ doc }: { doc: Transcript | null }) {
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
               {Math.round(speaker.share * 100)} %
             </span>
+            {onRenameSpeaker && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
+                title={de.transcript.renameSpeaker}
+                aria-label={`${de.transcript.renameSpeaker}: ${speaker.label}`}
+                onClick={() => setRenaming(speaker.id)}
+              >
+                <Pencil />
+              </Button>
+            )}
           </li>
         ))}
       </ul>
+
+      {renaming && onRenameSpeaker && (
+        <RenameSpeakerDialog
+          key={renaming}
+          currentLabel={doc?.speakers[renaming]?.label ?? renaming}
+          onSave={(label) => onRenameSpeaker(renaming, label)}
+          onClose={() => setRenaming(null)}
+        />
+      )}
     </>
   );
 }

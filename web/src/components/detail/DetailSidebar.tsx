@@ -45,6 +45,7 @@ interface DetailSidebarProps {
   value: DetailTab;
   onValueChange: (tab: DetailTab) => void;
   onSeek?: (seconds: number) => void;
+  onRenameSpeaker?: (speakerId: string, label: string) => Promise<void>;
   className?: string;
 }
 
@@ -61,6 +62,7 @@ export function DetailSidebar({
   value,
   onValueChange,
   onSeek,
+  onRenameSpeaker,
   className,
 }: DetailSidebarProps) {
   const tabs = availableTabs(doc);
@@ -102,7 +104,7 @@ export function DetailSidebar({
           <SummaryPanel doc={doc} legacy={legacy} />
         </TabsContent>
         <TabsContent value="speakers" className="min-h-0 flex-1 overflow-y-auto p-5">
-          <SpeakerLegend doc={doc} />
+          <SpeakerLegend doc={doc} onRenameSpeaker={onRenameSpeaker} />
         </TabsContent>
         <TabsContent value="hymns" className="min-h-0 flex-1 overflow-y-auto p-5">
           <HymnsPanel hymns={doc?.hymns ?? []} onSeek={onSeek} />

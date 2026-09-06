@@ -9,6 +9,8 @@ export interface ExportSettings {
   format: ExportFormat;
   /** Template id for DOCX exports; null for the built-in layout. */
   template: string | null;
+  /** Uploaded font for the built-in layout; null for the Word default. */
+  font: string | null;
   speaker_labels: boolean;
   timestamps: boolean;
   music: boolean;
@@ -26,6 +28,7 @@ export interface ExportSettings {
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   format: "docx",
   template: null,
+  font: null,
   speaker_labels: false,
   timestamps: false,
   music: false,
@@ -63,6 +66,7 @@ export function loadExportSettings(): ExportSettings {
   return {
     format: oneOf(stored.format, FORMATS, d.format),
     template: typeof stored.template === "string" ? stored.template : null,
+    font: typeof stored.font === "string" ? stored.font : null,
     speaker_labels: bool(stored.speaker_labels, d.speaker_labels),
     timestamps: bool(stored.timestamps, d.timestamps),
     music: bool(stored.music, d.music),
@@ -93,6 +97,7 @@ export function toExportOptions(
   settings: ExportSettings,
   selection: ExportSelection = { speakers: null, sections: null },
 ): ExportOptions {
+  const template = settings.format === "docx" ? settings.template : null;
   return {
     speakers: selection.speakers,
     sections: selection.sections,
@@ -103,6 +108,9 @@ export function toExportOptions(
     summary: settings.summary,
     paragraphs: settings.paragraphs,
     section_break: settings.section_break,
-    template: settings.format === "docx" ? settings.template : null,
+    template,
+    // A template brings its own fonts, and the server only applies the picked
+    // one to the built-in layout; sending it anyway would be a lie to the UI.
+    font: settings.format === "docx" && !template ? settings.font : null,
   };
 }

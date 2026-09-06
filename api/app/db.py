@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS templates (
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS fonts (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    -- The family name read out of the file; what the document asks Word for.
+    family        TEXT NOT NULL,
+    filename      TEXT NOT NULL,
+    size_bytes    INTEGER,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
 """
 
 

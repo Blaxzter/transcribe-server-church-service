@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import db, hymns
+from . import db, docx_fonts, hymns
 from .transcript import load
 
 router = APIRouter(prefix="/api/jobs", tags=["export"])
@@ -85,6 +85,9 @@ class ExportOptions(BaseModel):
 
     # Id of a stored Word template; only meaningful for DOCX.
     template: str | None = Field(default=None, max_length=64)
+    # Id of an uploaded font. Only for the built-in DOCX layout - a template
+    # brings its own fonts and they are left alone.
+    font: str | None = Field(default=None, max_length=64)
 
 
 # --------------------------------------------------------------------------
@@ -546,12 +549,33 @@ def _add_page_break(paragraph: Any) -> None:
     paragraph.add_run().add_break(WD_BREAK.PAGE)
 
 
+def _page_setup(document: Any) -> None:
+    """A4 with the margins a German Word document starts out with.
+
+    python-docx builds on a US Letter template, which is a page nobody here
+    prints on - and it made the export preview show margins that no printed
+    copy would ever have.
+    """
+    from docx.shared import Cm
+
+    for section in document.sections:
+        section.page_width = Cm(21)
+        section.page_height = Cm(29.7)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+
+
 def render_docx(job: Any, doc: dict[str, Any],
-                options: ExportOptions | None = None) -> bytes:
+                options: ExportOptions | None = None,
+                font: tuple[str, bytes] | None = None) -> bytes:
+    """The built-in DOCX layout. `font` is a (family name, file) to embed."""
     from docx import Document
 
     options = options or ExportOptions()
     document = Document()
+    _page_setup(document)
     if options.header:
         document.add_heading(_title(job, doc), level=0)
         if _field(job, "service_date"):
@@ -578,7 +602,8 @@ def render_docx(job: Any, doc: dict[str, Any],
 
     buffer = io.BytesIO()
     document.save(buffer)
-    return buffer.getvalue()
+    payload = buffer.getvalue()
+    return docx_fonts.apply_font(payload, *font) if font else payload
 
 
 # --- DOCX from a template ---------------------------------------------------
@@ -795,6 +820,19 @@ def _template_path(template_id: str) -> Path:
     return path
 
 
+def _font(font_id: str) -> tuple[str, bytes]:
+    """(family name, file) for a stored font."""
+    from . import fonts
+
+    row = db.query_one("SELECT * FROM fonts WHERE id = ?", (font_id,))
+    if row is None:
+        raise HTTPException(404, "Schriftart nicht gefunden")
+    path = fonts.font_path(row["id"])
+    if not path.exists():
+        raise HTTPException(410, "Die Datei der Schriftart fehlt")
+    return row["family"], path.read_bytes()
+
+
 def build_export(job: Any, doc: dict[str, Any], fmt: str,
                  options: ExportOptions) -> tuple[bytes | str, str]:
     """(payload, media type) for a format, honouring the options."""
@@ -802,7 +840,8 @@ def build_export(job: Any, doc: dict[str, Any], fmt: str,
         if options.template:
             payload = render_template(_template_path(options.template), job, doc, options)
         else:
-            payload = render_docx(job, doc, options)
+            payload = render_docx(job, doc, options,
+                                  _font(options.font) if options.font else None)
         return payload, DOCX_MEDIA_TYPE
     if fmt == "txt":
         return render_txt(job, doc, options), "text/plain; charset=utf-8"
