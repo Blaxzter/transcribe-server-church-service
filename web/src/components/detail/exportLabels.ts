@@ -1,4 +1,10 @@
-import type { ExportFormat, ParagraphMode, SectionBreak } from "@/lib/api";
+import type {
+  ExportFormat,
+  MusicStyle,
+  ParagraphMode,
+  SectionBreak,
+  SpeakerStyle,
+} from "@/lib/api";
 import { de } from "@/i18n/de";
 
 export const FORMAT_LABELS: Record<ExportFormat, string> = {
@@ -23,7 +29,28 @@ export const SECTION_BREAK_LABELS: Record<SectionBreak, string> = {
   page: de.exportDialog.sectionBreakPage,
 };
 
+export const SPEAKER_STYLE_LABELS: Record<SpeakerStyle, string> = {
+  line: de.exportDialog.speakerStyleLine,
+  inline: de.exportDialog.speakerStyleInline,
+};
+
+export const MUSIC_STYLE_LABELS: Record<MusicStyle, string> = {
+  cue: de.exportDialog.musicStyleCue,
+  marker: de.exportDialog.musicStyleMarker,
+};
+
+/**
+ * How a placeholder is spelled where capitalising the first letter is not
+ * enough. Matching in the template is case-insensitive either way; this is
+ * only so the name shown to copy reads the way a German word does.
+ */
+const SPELLINGS: Record<string, string> = {
+  langesdatum: "LangesDatum",
+  liederliste: "Liederliste",
+};
+
 /** "titel" -> "{{Titel}}", the way it is typed into the template. */
 export function placeholderToken(name: string): string {
-  return `{{${name.charAt(0).toUpperCase()}${name.slice(1)}}}`;
+  const spelled = SPELLINGS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
+  return `{{${spelled}}}`;
 }

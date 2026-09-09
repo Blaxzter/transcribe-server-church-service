@@ -175,6 +175,82 @@ def test_section_breaks_in_text_and_markdown() -> None:
     assert "---" not in none and "Abschnitt" not in none
 
 
+# ---------------------------------------------------------------------------
+# The shape of a service protocol
+# ---------------------------------------------------------------------------
+PROTOCOL = ExportOptions(speaker_labels=True, timestamps=False, music=True,
+                         header=False, summary=False, paragraphs="blocks",
+                         speaker_style="line", blank_lines=True, music_style="cue")
+
+
+def _shape(doc: dict, options: ExportOptions) -> list[tuple[str, str]]:
+    return [(b.kind, b.text) for b in exports.layout(doc, options)]
+
+
+def test_the_speaker_gets_a_line_of_their_own_once_per_turn() -> None:
+    doc = _service()
+    # Long enough that the reading breaks into two paragraphs - both of which
+    # belong to the same turn and must share the one name above them.
+    doc["segments"][4]["text"] = "x" * 800
+    doc["segments"][5]["text"] = "y" * 800
+    shaped = _shape(doc, PROTOCOL.model_copy(update={"blank_lines": False,
+                                                     "music": False}))
+    assert [kind for kind, _ in shaped] == [
+        "speaker", "paragraph",              # the pastor greets
+        "speaker", "paragraph", "paragraph",  # the lector reads, at length
+        "speaker", "paragraph", "paragraph",  # the pastor preaches and closes
+    ]
+    assert [text for kind, text in shaped if kind == "speaker"] == [
+        "Pfarrerin:", "Lektor:", "Pfarrerin:"]
+    assert all(b.speaker is None for b in exports.layout(doc, PROTOCOL)
+               if b.kind == "paragraph"), "the name must not also sit in the text"
+
+
+def test_the_name_stays_in_the_line_unless_asked_otherwise() -> None:
+    blocks = exports.layout(_service(), ExportOptions(speaker_style="inline"))
+    assert not any(b.kind == "speaker" for b in blocks)
+    assert blocks[1].speaker == "Pfarrerin"
+
+
+def test_blank_lines_space_the_paragraphs_but_never_double_up() -> None:
+    shaped = _shape(_service(), PROTOCOL)
+    kinds = [kind for kind, _ in shaped]
+    assert kinds[0] != "break", "no blank line before the first paragraph"
+    assert not any(a == b == "break" for a, b in zip(kinds, kinds[1:]))
+    # A name belongs to the text under it, so nothing is inserted between them.
+    for a, b in zip(shaped, shaped[1:]):
+        if a[0] == "speaker":
+            assert b[0] == "paragraph"
+
+
+def test_music_cues_carry_the_hymn_that_was_announced_for_them() -> None:
+    texts = [text for kind, text in _shape(_service(), PROTOCOL) if kind == "music"]
+    # "Wir singen den Choral Nummer 71" is said just before the singing starts.
+    assert texts[:2] == ["Orgelspiel", "Lied Nr. 71"]
+    # Nothing was announced for the closing hymn, so it stays a cue to edit.
+    assert "Gemeindegesang" in texts and not any("[" in t for t in texts)
+
+
+def test_markers_are_left_alone_unless_cues_are_asked_for() -> None:
+    texts = [text for kind, text in _shape(_service(), ExportOptions())
+             if kind == "music"]
+    assert texts[0] == "[Orgelspiel]"
+
+
+def test_blank_lines_do_not_double_the_spacing_of_text_and_markdown() -> None:
+    doc = _service()
+    assert exports.render_txt(JOB, doc, PROTOCOL) == exports.render_txt(
+        JOB, doc, PROTOCOL.model_copy(update={"blank_lines": False}))
+    assert "Pfarrerin:" in exports.render_txt(JOB, doc, PROTOCOL)
+
+
+def test_long_german_date_is_spelled_out() -> None:
+    assert exports._long_german_date("2026-08-24") == "24. August 2026"
+    assert exports._long_german_date("2026-03-01") == "1. März 2026"
+    assert exports._long_german_date(None) == ""
+    assert exports._long_german_date("irgendwann") == "irgendwann"
+
+
 def test_default_options_reproduce_the_old_export() -> None:
     doc = _service()
     text = exports.render_txt(JOB, doc)
@@ -429,6 +505,60 @@ def test_family_name_is_read_out_of_the_file() -> None:
     assert docx_fonts.family_name(_font_file("Source Serif 4")) == "Source Serif 4"
     assert docx_fonts.family_name(b"not a font at all") is None
     assert docx_fonts.family_name(b"") is None
+
+
+# ---------------------------------------------------------------------------
+# The example template built by scripts/make_template.py
+# ---------------------------------------------------------------------------
+BIRTHDAY = {"title": "Geburtstagsgottesdienst", "service_date": "2026-08-24",
+            "duration_s": 3600.0}
+
+
+@pytest.fixture(scope="module")
+def example_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The template the script writes; it is a build artefact, not a fixture file."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import make_template
+
+    return make_template.build(tmp_path_factory.mktemp("vorlage") / "Gottesdienst.docx")
+
+
+def test_the_example_template_writes_a_service_protocol(example_template: Path) -> None:
+    from docx import Document
+    from docx.shared import Cm
+
+    options = PROTOCOL.model_copy(update={"location": "Waldfrieden",
+                                          "service_time": "11:00 Uhr"})
+    document = Document(io.BytesIO(
+        exports.render_template(example_template, BIRTHDAY, _service(), options)))
+    texts = [p.text for p in document.paragraphs]
+
+    assert texts[:2] == ["Waldfrieden", "24. August 2026, 11:00 Uhr"]
+    assert texts[4] == "Geburtstagsgottesdienst"
+    body = texts[6:]
+    assert body[:4] == ["Orgelspiel", "", "Pfarrerin:",
+                        "Guten Morgen, liebe Gemeinde. Wir singen den Choral Nummer 71."]
+    assert "Lied Nr. 71" in body
+    assert "{{" not in " ".join(texts)
+
+    # The page and the running heads are the template's own and survive.
+    section = document.sections[0]
+    assert abs(section.page_width - Cm(21)) < Cm(0.01)
+    assert abs(section.left_margin - Cm(3.25)) < Cm(0.01)
+    assert section.header.paragraphs[0].text == "NICHT  DURCHGESEHEN"
+    footer = section.footer.paragraphs[0]
+    assert footer.text.startswith(
+        "Kirche im Waldfrieden, Geburtstagsgottesdienst, 24. August 2026, Seite")
+    # The page number is a Word field, not a run, so it is not in .text.
+    assert b'w:instr="NUMPAGES"' in footer._p.xml.encode()
+
+
+def test_a_service_with_no_place_given_leaves_no_placeholder_behind(
+        example_template: Path) -> None:
+    texts = _paragraph_texts(
+        exports.render_template(example_template, BIRTHDAY, _service(), PROTOCOL))
+    assert texts[0] == "" and texts[1] == "24. August 2026, "
+    assert "{{" not in " ".join(texts)
 
 
 def test_export_is_a4() -> None:

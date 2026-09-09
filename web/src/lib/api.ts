@@ -82,6 +82,8 @@ export interface Transcript {
 export type ExportFormat = "docx" | "md" | "txt" | "srt" | "vtt";
 export type ParagraphMode = "blocks" | "segment" | "speaker" | "section";
 export type SectionBreak = "none" | "blank" | "heading" | "page";
+export type SpeakerStyle = "inline" | "line";
+export type MusicStyle = "marker" | "cue";
 
 /** Mirrors `ExportOptions` on the server; every field is optional there too. */
 export interface ExportOptions {
@@ -96,6 +98,13 @@ export interface ExportOptions {
   summary?: boolean;
   paragraphs?: ParagraphMode;
   section_break?: SectionBreak;
+  speaker_style?: SpeakerStyle;
+  blank_lines?: boolean;
+  music_style?: MusicStyle;
+  /** Fills a template's {{Ort}}; nothing else uses it. */
+  location?: string;
+  /** Fills a template's {{Zeit}}. */
+  service_time?: string;
   /** Template id; DOCX only. */
   template?: string | null;
   /** Font id; DOCX without a template only. */

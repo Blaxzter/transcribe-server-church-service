@@ -362,14 +362,27 @@ split at pauses longer than two minutes instead. Untick a speaker to drop
 everything they say, untick a section to drop that part of the service. The
 music that leads into a section is exported with it.
 
-**How it looks.** Speaker names, timestamps, music markers, title and summary
-are each a switch. *Absätze* decides where paragraphs break (at every speaker
-change, short blocks, every sentence, or one paragraph per section) and
-*Zwischen den Abschnitten* what separates two sections (nothing, a blank line,
-a heading, a page break). These settings are stored in the browser's local
-storage; *Sofort herunterladen* reuses them for the whole recording without
-opening the dialog. The defaults are tuned for editing: no labels, no
-timestamps, a new paragraph at every speaker change.
+**How it looks.** Speaker names, timestamps, music markers, blank lines, title
+and summary are each a switch. *Absätze* decides where paragraphs break (at
+every speaker change, short blocks, every sentence, or one paragraph per
+section) and *Zwischen den Abschnitten* what separates two sections (nothing, a
+blank line, a heading, a page break). Two more decide the shape of the body:
+
+- *Namen stehen* — **in eigener Zeile** puts the speaker on a line of their
+  own, `Bruder Daniel Stolpe:`, written once when the speaker takes over
+  however many paragraphs they then talk for; **vor dem Absatz** is the old
+  label in front of every paragraph.
+- *Musik erscheint als* — **Zeile zum Überschreiben** writes a piece of music
+  as `Lied Nr. 71` when a number was announced just before it and otherwise as
+  `Gemeindegesang`, a line the editor turns into
+  `Chorlied Nr. 33: „Danket dem Herrn“`; **Markierung** leaves the detector's
+  own `[Gemeindegesang]` in grey italics.
+
+These settings are stored in the browser's local storage; *Sofort
+herunterladen* reuses them for the whole recording without opening the dialog.
+The defaults are the shape of the service protocols the church already writes
+by hand: short paragraphs with a blank line between them, the speaker named
+once on a line of their own, music as a cue to overwrite, and no timestamps.
 
 **Word templates.** Upload any `.docx` under *Vorlagen verwalten* and write
 placeholders wherever the recording's data should land. Everything else in the
@@ -380,7 +393,10 @@ footer:
 | Placeholder            | Becomes                                                            |
 | ---------------------- | ------------------------------------------------------------------ |
 | `{{Titel}}`            | title of the recording                                             |
+| `{{Ort}}`              | place, typed into the export dialog                                |
+| `{{Zeit}}`             | time of the service, typed into the export dialog                  |
 | `{{Datum}}`            | service date as `18.08.2023`                                       |
+| `{{LangesDatum}}`      | service date as `18. August 2023`                                  |
 | `{{Dauer}}`            | length of the recording                                            |
 | `{{Sprecher}}`         | names of the exported speakers, comma-separated                    |
 | `{{Lieder}}`           | announced hymn numbers, comma-separated                            |
@@ -394,6 +410,20 @@ template decides font, spacing and indentation. Unknown placeholders are left
 untouched and flagged in the template list. Templates live in
 `data/templates/`, one file per row in the `templates` table. The preview in
 the dialog renders the finished `.docx` in the browser, template included.
+
+`{{Ort}}` and `{{Zeit}}` are neither in the recording nor in the database, so
+they are typed into the export dialog under *Gottesdienst* — but only when the
+chosen template asks for them, so the fields never appear with nowhere to go.
+Both are remembered for the next export, and every place used before is offered
+as a list, because a congregation records in the same handful of buildings.
+
+`python scripts/make_template.py [ziel.docx]` writes an example template to
+`build/` — not committed, upload it like any other: A4 with the margins of the
+church's own protocols, URW Classico throughout, German hyphenation and
+`de-DE`, "NICHT DURCHGESEHEN" in the header, and the service with a real
+`PAGE`/`NUMPAGES` field in the footer. The occasion is plain text to edit in
+Word; place, time, date, title and the transcript are placeholders. The script
+is where that page setup is written down in a form that can be read and diffed.
 
 **Fonts.** Upload a `.ttf` or `.otf` under *Schriften verwalten* and pick it as
 the *Schriftart* of the export. The built-in layout has no font of its own —

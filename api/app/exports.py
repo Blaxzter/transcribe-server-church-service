@@ -53,6 +53,8 @@ SECTION_PREVIEW_CHARS = 110
 
 Paragraphs = Literal["blocks", "segment", "speaker", "section"]
 SectionBreak = Literal["none", "blank", "heading", "page"]
+SpeakerStyle = Literal["inline", "line"]
+MusicStyle = Literal["marker", "cue"]
 
 
 class ExportOptions(BaseModel):
@@ -82,6 +84,25 @@ class ExportOptions(BaseModel):
     paragraphs: Paragraphs = "blocks"
     # What separates two sections in the output.
     section_break: SectionBreak = "none"
+
+    # Where the speaker's name goes:
+    #   inline - in front of the text of every paragraph they speak
+    #   line   - once on a line of its own, "Name:", when the speaker changes
+    # A service protocol is written the second way, and it is the only one that
+    # reads well when one person talks for a dozen paragraphs.
+    speaker_style: SpeakerStyle = "inline"
+    # An empty paragraph between the paragraphs, the way a protocol is spaced.
+    blank_lines: bool = False
+    # How a piece of music is written down:
+    #   marker - the detector's own "[Gemeindegesang]"
+    #   cue    - a line to edit, "Lied Nr. 71" or "Gemeindegesang"
+    music_style: MusicStyle = "marker"
+
+    # Where and when the service was held. Neither is in the recording or the
+    # database - the date is, the rest is not - so they are typed per export
+    # and only reach the document through a template's {{Ort}} and {{Zeit}}.
+    location: str = Field(default="", max_length=120)
+    service_time: str = Field(default="", max_length=40)
 
     # Id of a stored Word template; only meaningful for DOCX.
     template: str | None = Field(default=None, max_length=64)
@@ -139,6 +160,23 @@ def _german_date(iso: str | None) -> str:
         return date.fromisoformat(iso[:10]).strftime("%d.%m.%Y")
     except ValueError:
         return iso
+
+
+# Spelled out rather than taken from strftime("%B"): the month name would then
+# depend on the server's locale, and a container has none.
+_MONTHS = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
+           "August", "September", "Oktober", "November", "Dezember")
+
+
+def _long_german_date(iso: str | None) -> str:
+    """'2026-08-24' -> '24. August 2026', the way a service heading reads."""
+    if not iso:
+        return ""
+    try:
+        day = date.fromisoformat(iso[:10])
+    except ValueError:
+        return iso
+    return f"{day.day}. {_MONTHS[day.month - 1]} {day.year}"
 
 
 # --------------------------------------------------------------------------
@@ -250,7 +288,7 @@ def section_summaries(doc: dict[str, Any]) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------
 @dataclass
 class Block:
-    kind: Literal["paragraph", "music", "heading", "break"]
+    kind: Literal["paragraph", "music", "heading", "break", "speaker"]
     text: str = ""
     # Display label of the speaker (already resolved), None when unlabelled.
     speaker: str | None = None
@@ -362,7 +400,100 @@ def layout(doc: dict[str, Any], options: ExportOptions) -> list[Block]:
         blocks.extend(music)
         blocks.extend(body)
         first = False
-    return blocks
+    return _shape(blocks, doc, options)
+
+
+# --------------------------------------------------------------------------
+# Shaping: the same blocks, spaced and labelled the way a protocol is
+# --------------------------------------------------------------------------
+def _hymn_cue_numbers(doc: dict[str, Any]) -> dict[float, list[int]]:
+    """Hymn numbers keyed by the start of the music they were announced for.
+
+    "Wir singen den Choral Nummer 71" is always said just before the singing
+    starts, so a number belongs to the next piece of music after it. Numbers
+    announced after the last piece belong to nothing and are dropped - they are
+    the pastor naming next week's hymn.
+
+    Keyed by the start rather than the segment id because a run of music merges
+    into one block on the way out and the ids do not survive that.
+    """
+    starts = sorted(round(float(s.get("start") or 0.0), 2)
+                    for s in doc.get("segments", []) if s.get("type") == "music")
+    found: dict[float, list[int]] = {}
+    for hymn in hymns.extract(doc):
+        following = next((start for start in starts if start >= hymn["at"]), None)
+        if following is None:
+            continue
+        found.setdefault(following, []).append(int(hymn["number"]))
+    return found
+
+
+def _cue_text(block: Block, numbers: list[int]) -> str:
+    """A music marker as an editable protocol line."""
+    if numbers:
+        return "Lied Nr. " + ", ".join(str(n) for n in numbers)
+    # "[Gemeindegesang]" is the detector talking to itself; the protocol says
+    # "Gemeindegesang" and the editor turns it into "Chorlied Nr. 33: ...".
+    return block.text.strip().strip("[]").strip() or block.text
+
+
+def _shape(blocks: list[Block], doc: dict[str, Any],
+           options: ExportOptions) -> list[Block]:
+    """Speaker lines of their own, blank lines between paragraphs, music cues.
+
+    Done here rather than in each renderer so that a Word template, the plain
+    DOCX and the text formats cannot end up with different shapes of the same
+    export.
+    """
+    named = options.speaker_labels and options.speaker_style == "line"
+    if not (named or options.blank_lines or options.music_style == "cue"):
+        return blocks
+
+    cues = _hymn_cue_numbers(doc) if options.music_style == "cue" else {}
+    shaped: list[Block] = []
+    speaking: str | None = None
+
+    def space() -> None:
+        """One blank paragraph, never two in a row and never a leading one."""
+        if options.blank_lines and shaped and shaped[-1].kind != "break":
+            shaped.append(Block(kind="break", mode="space",
+                                section=shaped[-1].section))
+
+    for block in blocks:
+        if block.kind == "break":
+            speaking = None
+            shaped.append(block)
+            continue
+        if block.kind == "music":
+            speaking = None
+            if options.music_style == "cue":
+                block.text = _cue_text(block, cues.get(round(block.start, 2), []))
+            space()
+            shaped.append(block)
+            continue
+        if block.kind == "heading":
+            speaking = None
+            space()
+            shaped.append(block)
+            continue
+        if named and block.speaker and block.speaker != speaking:
+            space()
+            shaped.append(Block(kind="speaker", text=f"{block.speaker}:",
+                                speaker=block.speaker, start=block.start,
+                                end=block.start, section=block.section))
+            speaking = block.speaker
+            # The name is on its own line now; repeating it in front of the
+            # text would read "Bruder Stolpe: Bruder Stolpe: All ihr lieben".
+            block.speaker = None
+            shaped.append(block)
+            continue
+        if named:
+            # Still inside the same speaker's turn, or a paragraph that merged
+            # several people and so has no honest name of its own.
+            block.speaker = None
+        space()
+        shaped.append(block)
+    return shaped
 
 
 def grouped(doc: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -432,6 +563,11 @@ def render_txt(job: Any, doc: dict[str, Any],
                 lines += ["-" * 40, ""]
             elif block.mode == "blank":
                 lines.append("")
+            # "space" is dropped: plain text already leaves a blank line after
+            # every paragraph, so spacing them would only ever double it.
+            continue
+        if block.kind == "speaker":
+            lines.append(block.text)
             continue
         if block.kind == "heading":
             stamp = f" ({short_clock(block.start)})" if options.timestamps else ""
@@ -464,6 +600,10 @@ def render_md(job: Any, doc: dict[str, Any],
                 lines += ["---", ""]
             elif block.mode == "blank":
                 lines.append("")
+            # "space" is dropped; a Markdown paragraph is already a blank line.
+            continue
+        if block.kind == "speaker":
+            lines += [f"**{block.text}**", ""]
             continue
         if block.kind == "heading":
             stamp = f" `{short_clock(block.start)}`" if options.timestamps else ""
@@ -522,11 +662,20 @@ def _write_paragraph(paragraph: Any, block: Block, options: ExportOptions) -> No
     """Fill a python-docx paragraph with one block, the same way in every DOCX."""
     from docx.shared import Pt, RGBColor
 
+    if block.kind == "speaker":
+        # Deliberately unstyled: in a service protocol the name reads as one
+        # more line of the text, and a template's own font is the whole point
+        # of using one.
+        paragraph.add_run(block.text)
+        return
     if block.kind == "music":
         stamp = f"{short_clock(block.start)}  " if options.timestamps else ""
         run = paragraph.add_run(f"{stamp}{block.text}")
-        run.italic = True
-        run.font.color.rgb = RGBColor(0x77, 0x77, 0x77)
+        if options.music_style == "marker":
+            # A cue is a line the editor will rewrite, so it is left looking
+            # like the rest of the text; a raw marker is the machine talking.
+            run.italic = True
+            run.font.color.rgb = RGBColor(0x77, 0x77, 0x77)
         return
     if block.kind == "heading":
         stamp = f"  {short_clock(block.start)}" if options.timestamps else ""
@@ -591,7 +740,7 @@ def render_docx(job: Any, doc: dict[str, Any],
         if block.kind == "break":
             if block.mode == "page":
                 _add_page_break(document.add_paragraph())
-            elif block.mode == "blank":
+            else:  # "blank" between sections, "space" between paragraphs
                 document.add_paragraph()
             continue
         if block.kind == "heading":
@@ -613,7 +762,11 @@ def render_docx(job: Any, doc: dict[str, Any],
 # whole paragraphs decides how it is substituted.
 TEMPLATE_FIELDS: dict[str, str] = {
     "titel": "inline",
+    "ort": "inline",
+    "zeit": "inline",
     "datum": "inline",
+    # The heading of a service protocol spells the date out: "24. August 2026".
+    "langesdatum": "inline",
     "dauer": "inline",
     "sprecher": "inline",
     "lieder": "inline",
@@ -751,7 +904,7 @@ def _write_block_into(paragraph: Any, block: Block, options: ExportOptions) -> N
     if block.kind == "break":
         if block.mode == "page":
             _add_page_break(paragraph)
-        # "blank" is an empty paragraph, which this already is.
+        # "blank" and "space" are an empty paragraph, which this already is.
         return
     _write_paragraph(paragraph, block, options)
 
@@ -764,7 +917,10 @@ def render_template(template_path: Path | str, job: Any, doc: dict[str, Any],
     hymn_numbers = [str(h["number"]) for h in hymns.extract(doc)]
     inline_values = {
         "titel": _title(job, doc),
+        "ort": options.location,
+        "zeit": options.service_time,
         "datum": _german_date(_field(job, "service_date")),
+        "langesdatum": _long_german_date(_field(job, "service_date")),
         "dauer": short_clock(float(doc.get("duration") or _field(job, "duration_s") or 0.0)),
         "sprecher": ", ".join(_speaker_names(doc, options)),
         "lieder": ", ".join(hymn_numbers),

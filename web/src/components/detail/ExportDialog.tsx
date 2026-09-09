@@ -5,9 +5,11 @@ import {
   saveFile,
   type ExportFormat,
   type Font,
+  type MusicStyle,
   type ParagraphMode,
   type Section,
   type SectionBreak,
+  type SpeakerStyle,
   type Template,
   type Transcript,
 } from "@/lib/api";
@@ -16,15 +18,21 @@ import { cn, formatTime, withAlpha } from "@/lib/utils";
 import {
   DEFAULT_EXPORT_SETTINGS,
   FORMATS,
+  loadLocations,
+  rememberLocation,
+  MUSIC_STYLES,
   PARAGRAPH_MODES,
   SECTION_BREAKS,
+  SPEAKER_STYLES,
   toExportOptions,
   type ExportSettings,
 } from "@/lib/exportSettings";
 import {
   FORMAT_LABELS,
+  MUSIC_STYLE_LABELS,
   PARAGRAPH_LABELS,
   SECTION_BREAK_LABELS,
+  SPEAKER_STYLE_LABELS,
 } from "@/components/detail/exportLabels";
 import { ExportPreview, type Preview } from "@/components/detail/ExportPreview";
 import { FontManager } from "@/components/detail/FontManager";
@@ -33,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/toast";
@@ -75,6 +84,7 @@ export function ExportDialog({
   const [fonts, setFonts] = useState<Font[] | null>(null);
   const [fields, setFields] = useState<string[]>([]);
   const [managing, setManaging] = useState<Managing>(null);
+  const [knownLocations, setKnownLocations] = useState<string[]>(() => loadLocations());
   const [preview, setPreview] = useState<Preview | null>(null);
   const [building, setBuilding] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -147,6 +157,16 @@ export function ExportDialog({
   const isDocx = format === "docx";
   const isSubtitles = format === "srt" || format === "vtt";
   const usingTemplate = isDocx && options.template != null;
+  /**
+   * Which of {{Ort}} and {{Zeit}} the chosen template actually asks for. Only
+   * a template has anywhere to put them, and asking for a place that the
+   * document never prints would be a field that does nothing.
+   */
+  const serviceFields = useMemo(() => {
+    if (!usingTemplate) return [];
+    const chosen = templates?.find((template) => template.id === options.template);
+    return ["ort", "zeit"].filter((name) => chosen?.placeholders.includes(name));
+  }, [usingTemplate, templates, options.template]);
 
   // --- preview ------------------------------------------------------------
   const requestKey = JSON.stringify([format, options]);
@@ -186,6 +206,7 @@ export function ExportDialog({
     setDownloading(true);
     try {
       saveFile(await api.exportFile(jobId, format, options));
+      setKnownLocations(rememberLocation(settings.location));
       onClose();
     } catch (error) {
       toast({
@@ -426,6 +447,40 @@ export function ExportDialog({
               )}
             </Group>
 
+            {serviceFields.length > 0 && (
+              <Group
+                title={de.exportDialog.service}
+                hint={de.exportDialog.serviceHint}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {serviceFields.includes("ort") && (
+                    <Labelled label={de.exportDialog.location}>
+                      <Input
+                        value={settings.location}
+                        list="export-locations"
+                        placeholder={de.exportDialog.locationPlaceholder}
+                        onChange={(event) => update({ location: event.target.value })}
+                      />
+                      <datalist id="export-locations">
+                        {knownLocations.map((place) => (
+                          <option key={place} value={place} />
+                        ))}
+                      </datalist>
+                    </Labelled>
+                  )}
+                  {serviceFields.includes("zeit") && (
+                    <Labelled label={de.exportDialog.serviceTime}>
+                      <Input
+                        value={settings.service_time}
+                        placeholder={de.exportDialog.serviceTimePlaceholder}
+                        onChange={(event) => update({ service_time: event.target.value })}
+                      />
+                    </Labelled>
+                  )}
+                </div>
+              </Group>
+            )}
+
             <Group
               title={de.exportDialog.layout}
               actions={
@@ -439,6 +494,9 @@ export function ExportDialog({
                       format: settings.format,
                       template: settings.template,
                       font: settings.font,
+                      // Where and when the service was is not a layout choice.
+                      location: settings.location,
+                      service_time: settings.service_time,
                     })
                   }
                 >
@@ -462,6 +520,12 @@ export function ExportDialog({
                   checked={settings.music}
                   onCheckedChange={(checked) => update({ music: checked })}
                   label={de.exportDialog.music}
+                />
+                <Switch
+                  checked={settings.blank_lines}
+                  onCheckedChange={(checked) => update({ blank_lines: checked })}
+                  disabled={isSubtitles}
+                  label={de.exportDialog.blankLines}
                 />
                 <Switch
                   checked={settings.header}
@@ -488,6 +552,36 @@ export function ExportDialog({
                     {PARAGRAPH_MODES.map((mode) => (
                       <option key={mode} value={mode}>
                         {PARAGRAPH_LABELS[mode]}
+                      </option>
+                    ))}
+                  </Select>
+                </Labelled>
+                <Labelled label={de.exportDialog.speakerStyle}>
+                  <Select
+                    value={settings.speaker_style}
+                    disabled={isSubtitles || !settings.speaker_labels}
+                    onChange={(event) =>
+                      update({ speaker_style: event.target.value as SpeakerStyle })
+                    }
+                  >
+                    {SPEAKER_STYLES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {SPEAKER_STYLE_LABELS[mode]}
+                      </option>
+                    ))}
+                  </Select>
+                </Labelled>
+                <Labelled label={de.exportDialog.musicStyle}>
+                  <Select
+                    value={settings.music_style}
+                    disabled={isSubtitles || !settings.music}
+                    onChange={(event) =>
+                      update({ music_style: event.target.value as MusicStyle })
+                    }
+                  >
+                    {MUSIC_STYLES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {MUSIC_STYLE_LABELS[mode]}
                       </option>
                     ))}
                   </Select>

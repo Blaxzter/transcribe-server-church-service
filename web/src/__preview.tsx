@@ -77,8 +77,9 @@ const FONTS = [
 
 const TEMPLATES = [
   {
-    id: "t1", name: "Predigt", filename: "Predigt.docx", size_bytes: 24_100,
-    placeholders: ["titel", "datum", "text"], unknown_placeholders: [],
+    id: "t1", name: "Gottesdienst", filename: "Gottesdienst.docx", size_bytes: 24_100,
+    placeholders: ["ort", "langesdatum", "zeit", "titel", "text"],
+    unknown_placeholders: [],
     created_at: "2026-09-06T10:00:00Z", updated_at: "2026-09-06T10:00:00Z",
   },
 ];
@@ -98,8 +99,8 @@ window.fetch = async (input: RequestInfo | URL): Promise<Response> => {
   if (url.includes("/api/templates")) {
     return json({
       templates: TEMPLATES,
-      fields: ["titel", "datum", "dauer", "sprecher", "lieder", "liederliste",
-               "zusammenfassung", "text"],
+      fields: ["titel", "ort", "zeit", "datum", "langesdatum", "dauer", "sprecher",
+               "lieder", "liederliste", "zusammenfassung", "text"],
     });
   }
   if (url.includes("/api/fonts")) return json({ fonts: FONTS });
@@ -128,7 +129,12 @@ try {
 }
 
 function Harness() {
-  const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
+  const [settings, setSettings] = useState<ExportSettings>({
+    ...DEFAULT_EXPORT_SETTINGS,
+    template: "t1",
+    location: "Waldfrieden",
+    service_time: "11:00 Uhr",
+  });
   return (
     <ThemeProvider>
       <ToastProvider>
