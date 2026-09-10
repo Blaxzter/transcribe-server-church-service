@@ -1036,6 +1036,43 @@ def test_single_run_still_just_clips() -> None:
     assert len(pieces) == 1 and pieces[0]["end"] == 20.0
 
 
+def test_words_go_to_the_run_they_were_spoken_in() -> None:
+    """From the 2026-08-30 service. One ASR segment ran 535-1067 s across two
+    hymns; sharing its 51 words out by run length cut the list two words early,
+    so "Strophen. Meine" - said at 803 s - was handed to the run at 1063 s."""
+    speech = [{"start": 535.7, "end": 551.3}, {"start": 793.4, "end": 802.5},
+              {"start": 1063.2, "end": 1067.4}]
+    segment = {"start": 535.7, "end": 1066.9, "text": "Amen Festgemeinde Strophen Meine lieben",
+               "words": _words([("Amen", 550.1, 550.8),
+                                ("Festgemeinde", 793.4, 794.4),
+                                ("Strophen", 802.6, 803.4), ("Meine", 803.6, 803.8),
+                                ("lieben", 1063.2, 1063.7)])}
+    pieces = merge.split_across_speech(segment, speech)
+    assert [p["text"] for p in pieces] == ["Amen", "Festgemeinde Strophen Meine", "lieben"]
+
+
+def test_a_redistributed_piece_never_ends_before_it_starts() -> None:
+    """The piece bounds come from the speech runs and the words from the ASR.
+    Where they disagree the words win - a segment whose end precedes its start
+    reads as a two-minute pause to the export's section split, which then cut
+    the service into fragments one word long."""
+    speech = [{"start": 10.0, "end": 20.0}, {"start": 300.0, "end": 310.0}]
+    segment = {"start": 10.0, "end": 310.0, "text": "a b",
+               "words": _words([("a", 12.0, 12.5), ("b", 302.0, 302.5)])}
+    for piece in merge.split_across_speech(segment, speech):
+        assert piece["end"] >= piece["start"]
+
+
+def test_a_word_outside_the_segment_widens_it_instead_of_inverting_it() -> None:
+    """The backstop for the other two splits: whatever put a word outside the
+    bounds it was cut from, the timespan still has to contain its own words."""
+    index = merge.SpeakerIndex([{"start": 0.0, "end": 400.0, "speaker": "SPEAKER_00"}])
+    segment = {"start": 300.0, "end": 20.0, "text": "a b",
+               "words": _words([("a", 300.5, 301.0), ("b", 301.1, 301.6)])}
+    piece = merge._split_by_speaker(segment, index)[0]
+    assert piece["start"] == 300.0 and piece["end"] == 301.6
+
+
 # ---------------------------------------------------------------------------
 # Phrasings that the first version of the rules got wrong
 # ---------------------------------------------------------------------------

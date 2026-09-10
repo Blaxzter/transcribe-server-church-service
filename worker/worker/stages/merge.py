@@ -187,40 +187,104 @@ def split_across_speech(segment: dict[str, Any], speech_regions: list[dict[str, 
     passage, which was really said, just later.
 
     The text of a merged chunk describes all the speech inside it, so the words
-    are distributed across the runs in proportion to how long each run lasts.
-    Timing within a run is approximate, but nothing is thrown away and no text
-    is placed over music.
+    are handed to the runs they were spoken in - by their own timestamps where
+    the ASR gave any, otherwise in proportion to how long each run lasts.
+    Nothing is thrown away and no text is placed over music.
     """
     runs = _speech_runs(segment, speech_regions, max_gap)
     if len(runs) <= 1:
         return [clip_to_speech(segment, speech_regions, max_gap)]
 
     words = segment.get("words")
-    total = sum(end - start for start, end in runs) or 1.0
-    pieces: list[dict[str, Any]] = []
-    consumed = 0
+    chunks = (_words_by_run(words, runs) if words
+              else _share_by_duration((segment.get("text") or "").split(), runs))
+    filled = [index for index, chunk in enumerate(chunks) if chunk]
 
-    units = words if words else (segment.get("text") or "").split()
-    for index, (start, end) in enumerate(runs):
-        last = index == len(runs) - 1
-        share = int(round(len(units) * (end - start) / total))
-        take = len(units) - consumed if last else max(share, 0)
-        chunk = units[consumed:consumed + take]
-        consumed += len(chunk)
-        if not chunk:
-            continue
+    pieces: list[dict[str, Any]] = []
+    for index in filled:
+        chunk = chunks[index]
+        start, end = runs[index]
+        first, last = index == filled[0], index == filled[-1]
         piece = {**segment,
-                 "start": round(segment["start"] if index == 0 else start, 3),
-                 "end": round(segment["end"] if last and segment["end"] < end else end, 3),
+                 "start": segment["start"] if first else start,
+                 "end": segment["end"] if last and segment["end"] < end else end,
                  "redistributed": True}
         if words:
             piece["words"] = chunk
             piece["text"] = " ".join(w["word"].strip() for w in chunk).strip()
+            piece["start"] = _outer_start(piece["start"], chunk[0]["start"])
+            piece["end"] = _outer_end(piece["end"], chunk[-1]["end"])
         else:
             piece["words"] = None
             piece["text"] = " ".join(chunk).strip()
+        piece["start"] = round(float(piece["start"]), 3)
+        piece["end"] = round(float(piece["end"]), 3)
         pieces.append(piece)
     return pieces or [segment]
+
+
+def _words_by_run(words: list[dict[str, Any]],
+                  runs: list[tuple[float, float]]) -> list[list[dict[str, Any]]]:
+    """Put every word in the run it was actually spoken in.
+
+    Only the *segment* bounds are merged across the silence - the word times
+    are real, because the ASR transcribes the VAD clips and maps their timings
+    back onto the recording. Sharing the words out by run length instead cut
+    the list a word or two off: on the 2026-08-30 service "Strophen. Meine",
+    spoken at 803 s, was handed to the run starting at 1063 s, which then gave
+    it a start four minutes after its own end.
+    """
+    chunks: list[list[dict[str, Any]]] = [[] for _ in runs]
+    cursor = 0
+    for word in words:
+        moment = (float(word["start"]) + float(word["end"])) / 2
+        # Never step back to an earlier run: word order is transcript order.
+        cursor = min(range(cursor, len(runs)),
+                     key=lambda index: _distance_to_run(moment, runs[index]))
+        chunks[cursor].append(word)
+    return chunks
+
+
+def _distance_to_run(moment: float, run: tuple[float, float]) -> float:
+    start, end = run
+    return max(start - moment, 0.0, moment - end)
+
+
+def _share_by_duration(units: list[Any],
+                       runs: list[tuple[float, float]]) -> list[list[Any]]:
+    """Spread untimed units over the runs in proportion to how long each lasts.
+
+    The fallback for a segment the ASR gave no word timings for: nothing better
+    is known than that a longer run holds more of the text.
+    """
+    total = sum(end - start for start, end in runs) or 1.0
+    chunks: list[list[Any]] = []
+    consumed = 0
+    for index, (start, end) in enumerate(runs):
+        last = index == len(runs) - 1
+        share = int(round(len(units) * (end - start) / total))
+        take = len(units) - consumed if last else max(share, 0)
+        chunks.append(units[consumed:consumed + take])
+        consumed += len(chunks[-1])
+    return chunks
+
+
+def _outer_start(outer: float, first_word: float) -> float:
+    """The piece's outer edge, unless its words begin before it.
+
+    Splitting keeps the outer bounds of the segment a piece was cut from, so
+    consecutive segments leave no hole in the timeline. That edge is only
+    trustworthy while every word really sits inside it; a word landing in the
+    wrong piece would otherwise produce a segment that ends before it starts,
+    which breaks the section split in the export, click-to-seek and everything
+    else that reads a timespan.
+    """
+    return min(float(outer), float(first_word))
+
+
+def _outer_end(outer: float, last_word: float) -> float:
+    """The piece's outer edge, unless its words run past it. See _outer_start."""
+    return max(float(outer), float(last_word))
 
 
 def _speech_runs(segment: dict[str, Any], speech_regions: list[dict[str, float]],
@@ -349,8 +413,10 @@ def _split_long(segment: dict[str, Any]) -> list[dict[str, Any]]:
         result.append({
             **segment,
             # Preserve the outer edges so the timeline keeps no holes.
-            "start": segment["start"] if index == 0 else round(group[0]["start"], 3),
-            "end": segment["end"] if index == len(pieces) - 1 else round(group[-1]["end"], 3),
+            "start": round(_outer_start(segment["start"], group[0]["start"])
+                           if index == 0 else group[0]["start"], 3),
+            "end": round(_outer_end(segment["end"], group[-1]["end"])
+                         if index == len(pieces) - 1 else group[-1]["end"], 3),
             "text": " ".join(w["word"].strip() for w in group).strip(),
             "words": group,
         })
@@ -424,8 +490,10 @@ def _split_by_speaker(segment: dict[str, Any], index: SpeakerIndex) -> list[dict
             "type": "speech",
             # Keep the original segment bounds at the outer edges so the
             # timeline has no gaps between consecutive segments.
-            "start": round(start if run_index == 0 else run_words[0]["start"], 3),
-            "end": round(end if run_index == len(runs) - 1 else run_words[-1]["end"], 3),
+            "start": round(_outer_start(start, run_words[0]["start"])
+                           if run_index == 0 else run_words[0]["start"], 3),
+            "end": round(_outer_end(end, run_words[-1]["end"])
+                         if run_index == len(runs) - 1 else run_words[-1]["end"], 3),
             "speaker": current["speaker"],
             "text": text,
             "words": run_words,
